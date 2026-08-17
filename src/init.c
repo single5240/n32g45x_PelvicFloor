@@ -684,16 +684,22 @@ void ADC_Initial(ADC_Module* ADCx)
 }
 uint16_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel)
 {
+    uint32_t timeout = 100000U;
     uint16_t dat;
 
+    ADC_ClearFlag(ADCx, ADC_FLAG_ENDC);
+    ADC_ClearFlag(ADCx, ADC_FLAG_STR);
     ADC_ConfigRegularChannel(ADCx, ADC_Channel, 1, ADC_SAMP_TIME_239CYCLES5);
     /* Start ADC Software Conversion */
     ADC_EnableSoftwareStartConv(ADCx, ENABLE);
-    while(ADC_GetFlagStatus(ADCx, ADC_FLAG_ENDC)==0) {
+    while (ADC_GetFlagStatus(ADCx, ADC_FLAG_ENDC) == RESET) {
+        if (--timeout == 0U) {
+            return 0U;
+        }
     }
+    dat=ADC_GetDat(ADCx);
     ADC_ClearFlag(ADCx, ADC_FLAG_ENDC);
     ADC_ClearFlag(ADCx, ADC_FLAG_STR);
-    dat=ADC_GetDat(ADCx);
     return dat;
 }
 
