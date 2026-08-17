@@ -337,7 +337,7 @@
               <MiscControls></MiscControls>
               <Define>N32G45X, USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>..\inc;..\firmware\CMSIS\core;..\firmware\CMSIS\device;..\firmware\n32g45x_std_periph_driver\inc;..\WS1850</IncludePath>
+              <IncludePath>..\inc;..\firmware\CMSIS\core;..\firmware\CMSIS\device;..\firmware\n32g45x_std_periph_driver\inc;..\WS1850;..\compoennts\RTT\Config;..\compoennts;..\compoennts\RTT\src</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -495,6 +495,21 @@
               <FileName>AppHandle.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\src\AppHandle.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>COMP</GroupName>
+          <Files>
+            <File>
+              <FileName>SEGGER_RTT.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\compoennts\RTT\src\SEGGER_RTT.c</FilePath>
+            </File>
+            <File>
+              <FileName>SEGGER_RTT_printf.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\compoennts\RTT\src\SEGGER_RTT_printf.c</FilePath>
             </File>
           </Files>
         </Group>
