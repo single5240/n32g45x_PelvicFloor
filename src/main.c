@@ -34,6 +34,11 @@
  */
 #include "main.h"
 
+#define DBG_TAG "SYS"
+#define DBG_LVL DBG_INFO
+#include "log_printf.h"
+#include "SEGGER_RTT.h"
+
 // LCD数字数组
 const uint8_t NUM1[] = {0xaf, 0x06, 0x6d, 0x4f, 0xc6, 0xcb, 0xeb, 0x0e, 0xef, 0xcf, 0x00};
 const uint8_t NUM2[] = {0x5f, 0x06, 0x3d, 0x2f, 0x66, 0x6b, 0x7b, 0x0e, 0x7f, 0x6f, 0x00};
@@ -1101,14 +1106,30 @@ typedef enum
 #define APP_EVENT_QUEUE_SIZE       16U
 #define KEY_SCAN_PERIOD_MS         10U
 #define KEY_DEBOUNCE_COUNT         3U
-#define POWER_ON_HOLD_MS           3000U
-#define POWER_OFF_HOLD_MS          3000U
-#define START_LONG_HOLD_MS         3000U
-#define UI_BACKLIGHT_SECONDS       60U
+#define POWER_ON_HOLD_MS           2000U
+#define POWER_OFF_HOLD_MS          2000U
+#define START_LONG_HOLD_MS         2000U
 #define UI_BLINK_PERIOD_MS         500U
 #define UI_MAX_POWER               60U
 #define UI_BEEP_ON_MS              60U
 #define UI_BEEP_GAP_MS             80U
+
+/* 电池检测参数：PA3 为 1/2 电池分压，PA6 为外部 2.5 V 参考。 */
+#define BATTERY_ADC_SAMPLE_COUNT          8U
+#define BATTERY_ADC_USED_SAMPLE_COUNT     6U
+#define BATTERY_REFERENCE_MV              2500U
+#define BATTERY_DIVIDER_GAIN              2U
+#define BATTERY_SAMPLE_IDLE_TICKS         8U
+#define BATTERY_ADC_RETRY_TICKS           10U
+#define BATTERY_VALID_MIN_MV              2500U
+#define BATTERY_VALID_MAX_MV              5000U
+#define BATTERY_FULL_MV                   4200U
+#define BATTERY_LEVEL_3_MV                4100U
+#define BATTERY_LEVEL_2_MV                3900U
+#define BATTERY_LEVEL_1_MV                3700U
+#define BATTERY_LOW_ENTER_MV              3500U
+#define BATTERY_LOW_EXIT_MV               3600U
+#define BATTERY_LOW_CONFIRM_COUNT         3U
 
 typedef struct
 {
@@ -1145,10 +1166,8 @@ typedef struct
 	uint8_t set_minutes;
 	uint8_t remaining_minutes;
 	uint8_t remaining_seconds;
-	uint8_t time_selected;
 	uint8_t blink_on;
 	uint16_t blink_elapsed_ms;
-	uint8_t backlight_seconds;
 	uint8_t battery_level;          /* 0～3 格 */
 	uint8_t battery_low;            /* 低电量时整个电池图标闪烁 */
 	uint8_t charger_connected;
@@ -1173,6 +1192,24 @@ typedef struct
 	uint32_t last_1000ms;
 } AppScheduler_t;
 
+typedef struct
+{
+	uint8_t adc_initialized;
+	uint8_t measurement_pending;
+	uint8_t next_sample_ticks;
+	uint8_t retry_ticks;
+	uint8_t valid;
+	uint8_t level;
+	uint8_t percent;
+	uint8_t low_battery;
+	uint8_t low_confirm_count;
+	uint8_t recover_confirm_count;
+	uint8_t error_reported;
+	uint16_t raw_battery;
+	uint16_t raw_reference;
+	uint16_t voltage_mv;
+} BatteryContext_t;
+
 /* SysTick 中断每 1 ms 增加一次。中断和主循环共享，因此必须使用 volatile。 */
 static volatile uint32_t s_system_tick_ms = 0U;
 static AppContext_t s_app;
@@ -1180,6 +1217,7 @@ static AppScheduler_t s_scheduler;
 static KeyFilter_t s_keys[KEY_ID_COUNT];
 static AppEventQueue_t s_event_queue;
 static UiModel_t s_ui;
+static BatteryContext_t s_battery;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -1195,6 +1233,8 @@ static void App_RequestState(AppState_t next_state);
 static void App_ApplyStateTransition(void);
 static void App_StateEnter(AppState_t state);
 static void App_StateExit(AppState_t state);
+static const char *App_StateName(AppState_t state);
+static const char *App_EventName(AppEvent_t event);
 static uint8_t Scheduler_IsDue(uint32_t *last_tick, uint32_t period_ms);
 
 static uint8_t Key_ReadPressed(KeyId_t key_id);
@@ -1217,16 +1257,34 @@ static void Ui_RenderPressure(void);
 static void Ui_RenderCharging(void);
 static void Ui_ClearDisplay(void);
 static uint8_t Ui_GetBatterySegments(uint8_t level);
+static uint8_t Ui_GetDisplayMinutes(void);
 static void Ui_CycleTreatmentTime(void);
 static void Ui_Countdown1s(void);
 static void Ui_Beep(uint8_t count);
 static void Ui_BuzzerTask10ms(void);
+
+static void Battery_InitModel(void);
+static void Battery_StartSession(void);
+static void Battery_Stop(void);
+static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
+                                      uint16_t *reference_adc);
+static uint16_t Battery_CalculateVoltageMv(uint16_t battery_adc,
+                                          uint16_t reference_adc);
+static uint8_t Battery_CalculateLevel(uint16_t voltage_mv);
+static uint8_t Battery_CalculatePercent(uint16_t voltage_mv);
+static void Battery_UpdateLowState(uint16_t voltage_mv);
+static void Battery_ProcessMeasurement(uint16_t battery_adc,
+                                       uint16_t reference_adc);
+static void Battery_Task100ms(void);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码。 */
 void AppUi_SetBleConnected(uint8_t connected);
 void AppUi_SetBattery(uint8_t level, uint8_t low_battery);
 void AppUi_SetPressureResult(uint16_t value);
 void AppUi_InflationCompleted(void);
+uint8_t AppBattery_IsValid(void);
+uint16_t AppBattery_GetVoltageMv(void);
+uint8_t AppBattery_GetPercent(void);
 
 static void Input_Task10ms(void);
 static void Communication_Task10ms(void);
@@ -1251,6 +1309,8 @@ static void Board_Init(void)
 	RCC_Configuration();
 	GPIO_Configuration();
 	SystemCoreClockUpdate();
+	SEGGER_RTT_Init();
+	LOG_I("t=%u system init, core=%u Hz", s_system_tick_ms, SystemCoreClock);
 
 	/* GPIO 初始化完成后，第一时间把执行器置于安全状态。 */
 	Board_EnterSafeState();
@@ -1259,6 +1319,7 @@ static void Board_Init(void)
 	if (SysTick_Config(SystemCoreClock / 1000U) != 0U)
 	{
 		/* 节拍初始化失败时保持安全状态，不继续启动业务。 */
+		LOG_E("t=%u SysTick init failed", s_system_tick_ms);
 		while (1)
 		{
 		}
@@ -1270,6 +1331,7 @@ static void Board_EnterSafeState(void)
 {
 	Treatment_StopOutputs();
 	Pressure_StopOutputs();
+	Battery_Stop();
 
 	BLEN_OFF;
 	VEN_OFF;
@@ -1324,6 +1386,7 @@ static void App_Init(void)
 	s_scheduler.last_1000ms = s_system_tick_ms;
 
 	Ui_InitModel();
+	Battery_InitModel();
 	Key_Init();
 
 	s_event_queue.read_index = 0U;
@@ -1375,6 +1438,38 @@ static void App_RunOnce(void)
 	App_ApplyStateTransition();
 }
 
+static const char *App_StateName(AppState_t state)
+{
+	switch (state)
+	{
+		case APP_STATE_POWER_OFF: return "POWER_OFF";
+		case APP_STATE_BOOTING:   return "BOOTING";
+		case APP_STATE_READY:     return "READY";
+		case APP_STATE_THERAPY:   return "THERAPY";
+		case APP_STATE_PRESSURE:  return "PRESSURE";
+		case APP_STATE_CHARGING:  return "CHARGING";
+		case APP_STATE_FAULT:     return "FAULT";
+		default:                  return "UNKNOWN";
+	}
+}
+
+static const char *App_EventName(AppEvent_t event)
+{
+	switch (event)
+	{
+		case APP_EVENT_POWER_SHORT:          return "POWER_SHORT";
+		case APP_EVENT_POWER_LONG:           return "POWER_LONG";
+		case APP_EVENT_FUNCTION_SHORT:       return "FUNCTION_SHORT";
+		case APP_EVENT_START_SHORT:          return "START_SHORT";
+		case APP_EVENT_START_LONG:           return "START_LONG";
+		case APP_EVENT_PLUS_SHORT:           return "PLUS_SHORT";
+		case APP_EVENT_MINUS_SHORT:          return "MINUS_SHORT";
+		case APP_EVENT_CHARGER_CONNECTED:    return "CHARGER_CONNECTED";
+		case APP_EVENT_CHARGER_DISCONNECTED: return "CHARGER_DISCONNECTED";
+		default:                             return "NONE";
+	}
+}
+
 /* 请求状态切换，不允许业务代码直接修改当前状态。 */
 static void App_RequestState(AppState_t next_state)
 {
@@ -1389,6 +1484,8 @@ static void App_ApplyStateTransition(void)
 		return;
 	}
 
+	LOG_I("t=%u state %s -> %s", s_system_tick_ms,
+	      App_StateName(s_app.state), App_StateName(s_app.next_state));
 	App_StateExit(s_app.state);
 	s_app.state = s_app.next_state;
 	App_StateEnter(s_app.state);
@@ -1431,8 +1528,6 @@ static void App_StateEnter(AppState_t state)
 			s_ui.beep_on_ms = 0U;
 			s_ui.beep_gap_ms = 0U;
 			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);
-			BLEN_OFF;
-			s_ui.backlight_seconds = 0U;
 			s_app.ui_dirty = 1U;
 			break;
 
@@ -1451,6 +1546,7 @@ static void App_StateEnter(AppState_t state)
 			Board_EnterSafeState();
 			Ui_InitModel();
 			Ui_InitHardware();
+			Battery_StartSession();
 			Ui_RecordActivity();
 			Ui_Beep(3U);
 			App_RequestState(APP_STATE_THERAPY);
@@ -1707,6 +1803,8 @@ static uint8_t EventQueue_Push(AppEvent_t event)
 	if (next_index == s_event_queue.read_index)
 	{
 		/* 队列满时保留已有事件，避免覆盖尚未处理的关机事件。 */
+		LOG_W("t=%u event queue full, drop=%s", s_system_tick_ms,
+		      App_EventName(event));
 		return 0U;
 	}
 
@@ -1730,6 +1828,9 @@ static uint8_t EventQueue_Pop(AppEvent_t *event)
 
 static void App_HandleEvent(AppEvent_t event)
 {
+	LOG_I("t=%u event=%s state=%s", s_system_tick_ms,
+	      App_EventName(event), App_StateName(s_app.state));
+
 	/* 充电状态优先级最高，接入充电器后立即退出所有工作状态。 */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
 	{
@@ -1762,7 +1863,7 @@ static void App_HandleEvent(AppEvent_t event)
 		return;
 	}
 
-	/* 工作状态下按任意有效按键都重新点亮背光。 */
+	/* 工作状态下记录有效操作；背光本身跟随 UI 生命周期。 */
 	Ui_RecordActivity();
 	if (s_ui.pressure_result_blink != 0U)
 	{
@@ -1781,13 +1882,13 @@ static void App_HandleEvent(AppEvent_t event)
 		case APP_EVENT_POWER_SHORT:
 			Ui_Beep(1U);
 			Ui_CycleTreatmentTime();
-			s_ui.time_selected = 1U;
+			LOG_I("t=%u treatment time=%u min", s_system_tick_ms,
+			      s_ui.set_minutes);
 			s_app.ui_dirty = 1U;
 			break;
 
 		case APP_EVENT_FUNCTION_SHORT:
 			Ui_Beep(1U);
-			s_ui.time_selected = 0U;
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				App_RequestState(APP_STATE_PRESSURE);
@@ -1800,12 +1901,13 @@ static void App_HandleEvent(AppEvent_t event)
 
 		case APP_EVENT_START_SHORT:
 			Ui_Beep(1U);
-			s_ui.time_selected = 0U;
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				s_ui.formula = (uint8_t)((s_ui.formula + 1U) % 3U);
 				s_ui.power_ch1 = 0U;
 				s_ui.power_ch2 = 0U;
+				LOG_I("t=%u formula=P%u, power reset", s_system_tick_ms,
+				      (uint8_t)(s_ui.formula + 1U));
 			}
 			else if (s_app.state == APP_STATE_PRESSURE)
 			{
@@ -1819,30 +1921,42 @@ static void App_HandleEvent(AppEvent_t event)
 					s_ui.pressure_action = PRESSURE_ACTION_INFLATING;
 				}
 				s_ui.pressure_action_ms = 0U;
+				LOG_I("t=%u pressure action=%s", s_system_tick_ms,
+				      (s_ui.pressure_action == PRESSURE_ACTION_INFLATING) ?
+				      "INFLATING" : "IDLE");
 			}
 			s_app.ui_dirty = 1U;
 			break;
 
 		case APP_EVENT_START_LONG:
 			Ui_Beep(1U);
-			s_ui.time_selected = 0U;
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				s_ui.selected_channel = (uint8_t)!s_ui.selected_channel;
+				LOG_I("t=%u selected channel=%u", s_system_tick_ms,
+				      (uint8_t)(s_ui.selected_channel + 1U));
 			}
 			else if (s_app.state == APP_STATE_PRESSURE)
 			{
 				s_ui.pressure_action = PRESSURE_ACTION_DEFLATING;
 				s_ui.pressure_action_ms = 2000U;
+				LOG_I("t=%u pressure action=DEFLATING", s_system_tick_ms);
 			}
 			s_app.ui_dirty = 1U;
 			break;
 
 		case APP_EVENT_PLUS_SHORT:
-			s_ui.time_selected = 0U;
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				Ui_Beep(1U);
+				/* 疗程结束后保持显示 0，直到用户再次增加强度开始新疗程。 */
+				if ((s_ui.power_ch1 == 0U) &&
+				    (s_ui.power_ch2 == 0U) &&
+				    (s_ui.remaining_minutes == 0U) &&
+				    (s_ui.remaining_seconds == 0U))
+				{
+					s_ui.remaining_minutes = s_ui.set_minutes;
+				}
 				uint8_t *power = (s_ui.selected_channel == 0U) ?
 				                 &s_ui.power_ch1 : &s_ui.power_ch2;
 				if (*power < UI_MAX_POWER - 10)
@@ -1853,12 +1967,13 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power) = UI_MAX_POWER;
 				}
+				LOG_I("t=%u power ch1=%u ch2=%u", s_system_tick_ms,
+				      s_ui.power_ch1, s_ui.power_ch2);
 				s_app.ui_dirty = 1U;
 			}
 			break;
 
 		case APP_EVENT_MINUS_SHORT:
-			s_ui.time_selected = 0U;
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				Ui_Beep(1U);
@@ -1872,6 +1987,8 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power) = 0;
 				}
+				LOG_I("t=%u power ch1=%u ch2=%u", s_system_tick_ms,
+				      s_ui.power_ch1, s_ui.power_ch2);
 				s_app.ui_dirty = 1U;
 			}
 			break;
@@ -1891,10 +2008,8 @@ static void Ui_InitModel(void)
 	s_ui.set_minutes = 30U;
 	s_ui.remaining_minutes = 30U;
 	s_ui.remaining_seconds = 0U;
-	s_ui.time_selected = 0U;
 	s_ui.blink_on = 1U;
 	s_ui.blink_elapsed_ms = 0U;
-	s_ui.backlight_seconds = 0U;
 	s_ui.battery_level = 0U;
 	s_ui.battery_low = 0U;
 	s_ui.charge_frame = 0U;
@@ -1926,12 +2041,14 @@ static void Ui_InitHardware(void)
 		TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);
 		s_ui.buzzer_initialized = 1U;
 	}
+
+	/* UI 开启期间背光常亮，不再使用无操作倒计时单独关闭背光。 */
+	BLEN_ON;
 }
 
 static void Ui_Shutdown(void)
 {
 	BLEN_OFF;
-	s_ui.backlight_seconds = 0U;
 
 	if (s_ui.lcd_initialized != 0U)
 	{
@@ -1941,7 +2058,6 @@ static void Ui_Shutdown(void)
 
 static void Ui_RecordActivity(void)
 {
-	s_ui.backlight_seconds = UI_BACKLIGHT_SECONDS;
 	if (s_ui.lcd_initialized != 0U)
 	{
 		BLEN_ON;
@@ -1968,6 +2084,22 @@ static uint8_t Ui_GetBatterySegments(uint8_t level)
 	return segments;
 }
 
+/*
+ * LCD 只显示整数分钟，因此对剩余时间向上取整：
+ * 9:59～9:01 显示 10，只有到 9:00 才显示 9。
+ */
+static uint8_t Ui_GetDisplayMinutes(void)
+{
+	uint8_t display_minutes = s_ui.remaining_minutes;
+
+	if ((s_ui.remaining_seconds != 0U) && (display_minutes < 99U))
+	{
+		display_minutes++;
+	}
+
+	return display_minutes;
+}
+
 static void Ui_ClearDisplay(void)
 {
 	uint8_t address;
@@ -1980,11 +2112,11 @@ static void Ui_ClearDisplay(void)
 
 static void Ui_RenderTherapy(void)
 {
+	uint8_t display_minutes = Ui_GetDisplayMinutes();
 	uint8_t channel1_icon = 0x10U;
 	uint8_t channel2_icon = 0x10U;
 	uint8_t formula_icon = 0x10U;
 	uint8_t formula_value = (uint8_t)(s_ui.formula + 1U);
-	uint8_t time_icon = 0x80U;
 	uint8_t ble_icon = 0x80U;
 	uint8_t battery_segments = Ui_GetBatterySegments(s_ui.battery_level);
 
@@ -2002,10 +2134,6 @@ static void Ui_RenderTherapy(void)
 			channel2_icon = 0U;
 		}
 
-		if (s_ui.time_selected != 0U)
-		{
-			time_icon = 0U;
-		}
 	}
 
 	/* 蓝牙未连接时常亮，连接成功后随统一闪烁节拍闪烁。 */
@@ -2027,19 +2155,19 @@ static void Ui_RenderTherapy(void)
 	write_LCD(1U, 10U, NUM2[10]);
 	write_LCD(1U, 12U, NUM2[10]);
 	write_LCD(1U, 14U, NUM2[10]);
-	write_LCD(1U, 16U, NUM2[s_ui.remaining_minutes / 10U] | ble_icon);
-	write_LCD(1U, 18U, NUM2[s_ui.remaining_minutes % 10U] | time_icon);
+	write_LCD(1U, 16U, NUM2[display_minutes / 10U] | ble_icon);
+	write_LCD(1U, 18U, NUM2[display_minutes % 10U] | 0x80U);
 	write_LCD(1U, 20U, battery_segments);
 }
 
 static void Ui_RenderPressure(void)
 {
 	uint16_t pressure = s_ui.pressure_value;
+	uint8_t display_minutes = Ui_GetDisplayMinutes();
 	uint8_t air_in_icon = 0U;
 	uint8_t air_out_icon = 0U;
 	uint8_t pressure_icon = 0x80U;
 	uint8_t unit_icon = 0x80U;
-	uint8_t time_icon = 0x80U;
 	uint8_t ble_icon = 0x80U;
 	uint8_t battery_segments = Ui_GetBatterySegments(s_ui.battery_level);
 	uint8_t pressure_hundreds;
@@ -2073,11 +2201,6 @@ static void Ui_RenderPressure(void)
 		unit_icon = 0U;
 	}
 
-	if ((s_ui.time_selected != 0U) && (s_ui.blink_on == 0U))
-	{
-		time_icon = 0U;
-	}
-
 	if ((s_ui.ble_connected != 0U) && (s_ui.blink_on == 0U))
 	{
 		ble_icon = 0U;
@@ -2096,8 +2219,8 @@ static void Ui_RenderPressure(void)
 	write_LCD(1U, 10U, NUM2[pressure_hundreds] | pressure_icon);
 	write_LCD(1U, 12U, NUM2[pressure_tens] | air_out_icon);
 	write_LCD(1U, 14U, NUM2[pressure_ones] | unit_icon);
-	write_LCD(1U, 16U, NUM2[s_ui.remaining_minutes / 10U] | ble_icon);
-	write_LCD(1U, 18U, NUM2[s_ui.remaining_minutes % 10U] | time_icon);
+	write_LCD(1U, 16U, NUM2[display_minutes / 10U] | ble_icon);
+	write_LCD(1U, 18U, NUM2[display_minutes % 10U] | 0x80U);
 	write_LCD(1U, 20U, battery_segments);
 }
 
@@ -2157,7 +2280,13 @@ static void Ui_CycleTreatmentTime(void)
 
 void AppUi_SetBleConnected(uint8_t connected)
 {
-	s_ui.ble_connected = (connected != 0U) ? 1U : 0U;
+	uint8_t new_state = (connected != 0U) ? 1U : 0U;
+
+	if (new_state != s_ui.ble_connected)
+	{
+		LOG_I("t=%u BLE connected=%u", s_system_tick_ms, new_state);
+	}
+	s_ui.ble_connected = new_state;
 	s_app.ui_dirty = 1U;
 }
 
@@ -2175,6 +2304,8 @@ void AppUi_SetPressureResult(uint16_t value)
 	s_ui.pressure_action_ms = 0U;
 	s_ui.pressure_result_blink = 1U;
 	s_app.ui_dirty = 1U;
+	LOG_I("t=%u pressure result=%u mmHg", s_system_tick_ms,
+	      s_ui.pressure_value);
 }
 
 void AppUi_InflationCompleted(void)
@@ -2184,7 +2315,403 @@ void AppUi_InflationCompleted(void)
 		s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 		s_ui.pressure_action_ms = 0U;
 		s_app.ui_dirty = 1U;
+		LOG_I("t=%u inflation completed", s_system_tick_ms);
 	}
+}
+
+static void Battery_InitModel(void)
+{
+	s_battery.adc_initialized = 0U;
+	s_battery.measurement_pending = 0U;
+	s_battery.next_sample_ticks = 0U;
+	s_battery.retry_ticks = 0U;
+	s_battery.valid = 0U;
+	s_battery.level = 0U;
+	s_battery.percent = 0U;
+	s_battery.low_battery = 0U;
+	s_battery.low_confirm_count = 0U;
+	s_battery.recover_confirm_count = 0U;
+	s_battery.error_reported = 0U;
+	s_battery.raw_battery = 0U;
+	s_battery.raw_reference = 0U;
+	s_battery.voltage_mv = 0U;
+}
+
+static void Battery_StartSession(void)
+{
+	/* 每次开机重新建立滤波初值，避免沿用上一次关机前的数据。 */
+	Battery_Stop();
+	Battery_InitModel();
+	AppUi_SetBattery(0U, 0U);
+}
+
+static void Battery_Stop(void)
+{
+	BATEN_OFF;
+	s_battery.measurement_pending = 0U;
+	s_battery.next_sample_ticks = 0U;
+
+	if (s_battery.adc_initialized != 0U)
+	{
+		if (ADC_DisableSafe(ADC1) == 0U)
+		{
+			ADC_DeInit(ADC1);
+		}
+		s_battery.adc_initialized = 0U;
+	}
+}
+
+/*
+ * 连续读取 8 组电池/参考通道，分别去掉一个最大值和一个最小值，
+ * 对剩余 6 组求平均。这样既能抑制偶发尖峰，又不会让任务长期阻塞。
+ */
+static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
+                                      uint16_t *reference_adc)
+{
+	uint8_t index;
+	uint16_t battery_sample;
+	uint16_t reference_sample;
+	uint16_t battery_min = 0xFFFFU;
+	uint16_t battery_max = 0U;
+	uint16_t reference_min = 0xFFFFU;
+	uint16_t reference_max = 0U;
+	uint32_t battery_sum = 0U;
+	uint32_t reference_sum = 0U;
+
+	/*
+	 * PA3 and PA6 have different source voltages/impedances. Do not alternate
+	 * them for every retained sample: after selecting each channel, discard one
+	 * conversion so the ADC sampling capacitor can settle to the new input.
+	 */
+	if (ADC_GetData(ADC1, ADC1_Channel_04_PA3) == 0U)
+	{
+		return 0U;
+	}
+
+	for (index = 0U; index < BATTERY_ADC_SAMPLE_COUNT; index++)
+	{
+		battery_sample = ADC_GetData(ADC1, ADC1_Channel_04_PA3);
+
+		/* 0 同时也是 ADC_GetData() 的超时返回值。 */
+		if (battery_sample == 0U)
+		{
+			return 0U;
+		}
+
+		battery_sum += battery_sample;
+
+		if (battery_sample < battery_min)
+		{
+			battery_min = battery_sample;
+		}
+		if (battery_sample > battery_max)
+		{
+			battery_max = battery_sample;
+		}
+	}
+
+	if (ADC_GetData(ADC1, ADC1_Channel_03_PA6) == 0U)
+	{
+		return 0U;
+	}
+
+	for (index = 0U; index < BATTERY_ADC_SAMPLE_COUNT; index++)
+	{
+		reference_sample = ADC_GetData(ADC1, ADC1_Channel_03_PA6);
+
+		/* 外部 2.5 V 参考不可能为 0。 */
+		if (reference_sample == 0U)
+		{
+			return 0U;
+		}
+
+		reference_sum += reference_sample;
+
+		if (reference_sample < reference_min)
+		{
+			reference_min = reference_sample;
+		}
+		if (reference_sample > reference_max)
+		{
+			reference_max = reference_sample;
+		}
+	}
+
+	battery_sum -= (uint32_t)battery_min + battery_max;
+	reference_sum -= (uint32_t)reference_min + reference_max;
+
+	*battery_adc = (uint16_t)((battery_sum +
+	                           (BATTERY_ADC_USED_SAMPLE_COUNT / 2U)) /
+	                          BATTERY_ADC_USED_SAMPLE_COUNT);
+	*reference_adc = (uint16_t)((reference_sum +
+	                             (BATTERY_ADC_USED_SAMPLE_COUNT / 2U)) /
+	                            BATTERY_ADC_USED_SAMPLE_COUNT);
+	return 1U;
+}
+
+/*
+ * PA6 的 2.5 V 精密参考和 PA3 的 1/2 电池分压使用同一个 ADC 参考电源：
+ *
+ *   ADC_BATT / ADC_REF = (Vbat / 2) / 2500 mV
+ *   Vbat(mV) = ADC_BATT * 2500 * 2 / ADC_REF
+ *
+ * 比值法会约掉 ADC 满量程和 VDDA，因此 VDDA 波动不会直接带入结果。
+ */
+static uint16_t Battery_CalculateVoltageMv(uint16_t battery_adc,
+                                          uint16_t reference_adc)
+{
+	uint32_t numerator;
+
+	if (reference_adc == 0U)
+	{
+		return 0U;
+	}
+
+	numerator = (uint32_t)battery_adc * BATTERY_REFERENCE_MV *
+	            BATTERY_DIVIDER_GAIN;
+	return (uint16_t)((numerator + (reference_adc / 2U)) / reference_adc);
+}
+
+static uint8_t Battery_CalculateLevel(uint16_t voltage_mv)
+{
+	if (voltage_mv >= BATTERY_LEVEL_3_MV)
+	{
+		return 3U;
+	}
+	if (voltage_mv >= BATTERY_LEVEL_2_MV)
+	{
+		return 2U;
+	}
+	if (voltage_mv >= BATTERY_LEVEL_1_MV)
+	{
+		return 1U;
+	}
+	return 0U;
+}
+
+/* 沿用旧程序的 3.5～4.2 V 线性百分比，仅供通信/调试使用。 */
+static uint8_t Battery_CalculatePercent(uint16_t voltage_mv)
+{
+	uint32_t percent;
+
+	if (voltage_mv <= BATTERY_LOW_ENTER_MV)
+	{
+		return 0U;
+	}
+	if (voltage_mv >= BATTERY_FULL_MV)
+	{
+		return 100U;
+	}
+
+	percent = ((uint32_t)(voltage_mv - BATTERY_LOW_ENTER_MV) * 100U + 350U) /
+	          (BATTERY_FULL_MV - BATTERY_LOW_ENTER_MV);
+	return (uint8_t)percent;
+}
+
+static void Battery_UpdateLowState(uint16_t voltage_mv)
+{
+	if (voltage_mv <= BATTERY_LOW_ENTER_MV)
+	{
+		s_battery.recover_confirm_count = 0U;
+		if (s_battery.low_confirm_count < BATTERY_LOW_CONFIRM_COUNT)
+		{
+			s_battery.low_confirm_count++;
+		}
+		if (s_battery.low_confirm_count >= BATTERY_LOW_CONFIRM_COUNT)
+		{
+			s_battery.low_battery = 1U;
+		}
+	}
+	else if (voltage_mv >= BATTERY_LOW_EXIT_MV)
+	{
+		s_battery.low_confirm_count = 0U;
+		if (s_battery.recover_confirm_count < BATTERY_LOW_CONFIRM_COUNT)
+		{
+			s_battery.recover_confirm_count++;
+		}
+		if (s_battery.recover_confirm_count >= BATTERY_LOW_CONFIRM_COUNT)
+		{
+			s_battery.low_battery = 0U;
+		}
+	}
+	else
+	{
+		/* 3.5～3.6 V 为回差区，保持当前低电状态。 */
+		s_battery.low_confirm_count = 0U;
+		s_battery.recover_confirm_count = 0U;
+	}
+}
+
+static void Battery_ProcessMeasurement(uint16_t battery_adc,
+                                       uint16_t reference_adc)
+{
+	uint8_t previous_valid = s_battery.valid;
+	uint8_t previous_level = s_battery.level;
+	uint8_t previous_low = s_battery.low_battery;
+	uint16_t measured_mv = Battery_CalculateVoltageMv(battery_adc,
+	                                                   reference_adc);
+
+	if ((measured_mv < BATTERY_VALID_MIN_MV) ||
+	    (measured_mv > BATTERY_VALID_MAX_MV))
+	{
+		if (s_battery.error_reported == 0U)
+		{
+			LOG_W("t=%u battery value invalid, bat_adc=%u ref_adc=%u mv=%u",
+			      s_system_tick_ms, battery_adc, reference_adc, measured_mv);
+			s_battery.error_reported = 1U;
+		}
+		return;
+	}
+
+	s_battery.raw_battery = battery_adc;
+	s_battery.raw_reference = reference_adc;
+
+	if (s_battery.valid == 0U)
+	{
+		s_battery.voltage_mv = measured_mv;
+		s_battery.valid = 1U;
+	}
+	else
+	{
+		/* 一阶低通：新值占 1/4，旧值占 3/4，降低负载脉冲造成的跳动。 */
+		s_battery.voltage_mv = (uint16_t)(((uint32_t)s_battery.voltage_mv * 3U +
+		                                        measured_mv + 2U) / 4U);
+	}
+
+	s_battery.level = Battery_CalculateLevel(s_battery.voltage_mv);
+	s_battery.percent = Battery_CalculatePercent(s_battery.voltage_mv);
+	Battery_UpdateLowState(s_battery.voltage_mv);
+	AppUi_SetBattery(s_battery.level, s_battery.low_battery);
+
+	if (s_battery.error_reported != 0U)
+	{
+		LOG_I("t=%u battery sampling recovered", s_system_tick_ms);
+		s_battery.error_reported = 0U;
+	}
+	if (previous_valid == 0U)
+	{
+		LOG_I("t=%u battery ready, bat_adc=%u ref_adc=%u mv=%u percent=%u level=%u",
+		      s_system_tick_ms, battery_adc, reference_adc,
+		      s_battery.voltage_mv, s_battery.percent, s_battery.level);
+	}
+	else if (previous_level != s_battery.level)
+	{
+		LOG_I("t=%u battery level=%u mv=%u percent=%u", s_system_tick_ms,
+		      s_battery.level, s_battery.voltage_mv, s_battery.percent);
+	}
+	if (previous_low != s_battery.low_battery)
+	{
+		if (s_battery.low_battery != 0U)
+		{
+			LOG_W("t=%u low battery, mv=%u", s_system_tick_ms,
+			      s_battery.voltage_mv);
+		}
+		else
+		{
+			LOG_I("t=%u low battery cleared, mv=%u", s_system_tick_ms,
+			      s_battery.voltage_mv);
+		}
+	}
+	LOG_D("t=%u battery sample, bat_adc=%u ref_adc=%u mv=%u percent=%u",
+	      s_system_tick_ms, battery_adc, reference_adc,
+	      s_battery.voltage_mv, s_battery.percent);
+}
+
+static void Battery_Task100ms(void)
+{
+	uint16_t battery_adc;
+	uint16_t reference_adc;
+	uint8_t working_state = ((s_app.state == APP_STATE_READY) ||
+	                         (s_app.state == APP_STATE_THERAPY) ||
+	                         (s_app.state == APP_STATE_PRESSURE)) ? 1U : 0U;
+
+	if (working_state == 0U)
+	{
+		if (s_battery.measurement_pending != 0U)
+		{
+			BATEN_OFF;
+			s_battery.measurement_pending = 0U;
+		}
+		return;
+	}
+
+	if (s_battery.retry_ticks != 0U)
+	{
+		s_battery.retry_ticks--;
+		return;
+	}
+
+	if (s_battery.adc_initialized == 0U)
+	{
+		if (ADC_Initial(ADC1) == 0U)
+		{
+			if (s_battery.error_reported == 0U)
+			{
+				LOG_E("t=%u battery ADC init failed", s_system_tick_ms);
+				s_battery.error_reported = 1U;
+			}
+			s_battery.retry_ticks = BATTERY_ADC_RETRY_TICKS;
+			return;
+		}
+		s_battery.adc_initialized = 1U;
+		LOG_I("t=%u battery ADC initialized", s_system_tick_ms);
+	}
+
+	if (s_battery.measurement_pending != 0U)
+	{
+		/* BATEN 已保持一个 100 ms 任务周期，分压节点已经稳定。 */
+		if (Battery_ReadAveragedAdc(&battery_adc, &reference_adc) != 0U)
+		{
+			Battery_ProcessMeasurement(battery_adc, reference_adc);
+		}
+		else
+		{
+			/* 转换异常时重新初始化 ADC，但保留上一笔有效显示。 */
+			if (s_battery.error_reported == 0U)
+			{
+				LOG_E("t=%u battery ADC conversion failed", s_system_tick_ms);
+				s_battery.error_reported = 1U;
+			}
+			if (ADC_DisableSafe(ADC1) == 0U)
+			{
+				LOG_E("t=%u battery ADC power-down timeout", s_system_tick_ms);
+			}
+			/* A conversion timeout can leave ADC state stale; reset before retry. */
+			ADC_DeInit(ADC1);
+			s_battery.adc_initialized = 0U;
+			s_battery.retry_ticks = BATTERY_ADC_RETRY_TICKS;
+		}
+
+		BATEN_OFF;
+		s_battery.measurement_pending = 0U;
+		s_battery.next_sample_ticks = BATTERY_SAMPLE_IDLE_TICKS;
+		return;
+	}
+
+	if (s_battery.next_sample_ticks != 0U)
+	{
+		s_battery.next_sample_ticks--;
+		return;
+	}
+
+	/* 只在采样前打开分压检测电路，下一次 100 ms 任务再读取。 */
+	BATEN_ON;
+	s_battery.measurement_pending = 1U;
+}
+
+uint8_t AppBattery_IsValid(void)
+{
+	return s_battery.valid;
+}
+
+uint16_t AppBattery_GetVoltageMv(void)
+{
+	return s_battery.voltage_mv;
+}
+
+uint8_t AppBattery_GetPercent(void)
+{
+	return s_battery.percent;
 }
 
 static void Ui_Beep(uint8_t count)
@@ -2260,7 +2787,7 @@ static void Ui_Countdown1s(void)
 	    (s_ui.remaining_seconds == 0U))
 	{
 		Treatment_StopOutputs();
-		s_ui.remaining_minutes = s_ui.set_minutes;
+		LOG_W("t=%u therapy stopped: zero remaining time", s_system_tick_ms);
 		Ui_RecordActivity();
 		s_app.ui_dirty = 1U;
 		return;
@@ -2280,14 +2807,14 @@ static void Ui_Countdown1s(void)
 	    (s_ui.remaining_seconds == 0U))
 	{
 		Treatment_StopOutputs();
-		s_ui.remaining_minutes = s_ui.set_minutes;
+		LOG_I("t=%u therapy completed, time=0 power=0/0", s_system_tick_ms);
 		Ui_RecordActivity();
 		s_app.ui_dirty = 1U;
 		return;
 	}
 
-	/* LCD 只显示分钟，但分钟变化时仍需刷新。 */
-	if (s_ui.remaining_seconds == 59U)
+	/* 向上取整后的显示值只在秒数减到 0 时变化。 */
+	if (s_ui.remaining_seconds == 0U)
 	{
 		s_app.ui_dirty = 1U;
 	}
@@ -2340,6 +2867,7 @@ static void Control_Task10ms(void)
 			s_ui.pressure_action_ms = 0U;
 			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 			s_app.ui_dirty = 1U;
+			LOG_I("t=%u pressure action completed", s_system_tick_ms);
 		}
 		else
 		{
@@ -2373,26 +2901,12 @@ static void Ui_Task50ms(void)
 
 static void Sensor_Task100ms(void)
 {
-	/* TODO：仅在 ADC 已初始化且当前状态需要时采集压力和电池数据。 */
+	Battery_Task100ms();
+	/* TODO：压力模式启用后，在这里增加压力 ADC 的非阻塞采样。 */
 }
 
 static void Power_Task1000ms(void)
 {
-	if ((s_app.state == APP_STATE_THERAPY) ||
-	    (s_app.state == APP_STATE_PRESSURE) ||
-	    (s_app.state == APP_STATE_READY))
-	{
-		if (s_ui.backlight_seconds > 0U)
-		{
-			s_ui.backlight_seconds--;
-			BLEN_ON;
-		}
-		else
-		{
-			BLEN_OFF;
-		}
-	}
-
 	if (s_app.state == APP_STATE_CHARGING)
 	{
 		if (s_ui.charger_full == 0U)
@@ -2411,6 +2925,7 @@ int main(void)
 {
 	Board_Init();
 	App_Init();
+	LOG_I("t=%u main loop started", s_system_tick_ms);
 
 	while (1)
 	{

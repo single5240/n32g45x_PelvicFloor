@@ -81,6 +81,12 @@ void RCC_Configuration(void)
     /* RCC_ADCHCLK_DIV16*/
     ADC_ConfigClk(ADC_CTRL3_CKMOD_AHB,RCC_ADCHCLK_DIV16);
 
+    /*
+     * N32G45x ADC also needs a dedicated 1 MHz timing clock. SystemInit()
+     * resets CFG2 to HSI/1, which is 8 MHz, so divide it explicitly.
+     */
+    RCC_ConfigAdc1mClk(RCC_ADC1MCLK_SRC_HSI, RCC_ADC1MCLK_DIV8);
+
 }
 /**
  * @brief  Configures the different GPIO ports.
@@ -658,9 +664,10 @@ void PBExtiInit(void)
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 }
-void ADC_Initial(ADC_Module* ADCx)
+uint8_t ADC_Initial(ADC_Module* ADCx)
 {
     ADC_InitType ADC_InitStructure;
+    uint32_t timeout = 100000U;
     /* ADC configuration ------------------------------------------------------*/
     ADC_InitStructure.WorkMode       = ADC_WORKMODE_INDEPENDENT;
     ADC_InitStructure.MultiChEn      = DISABLE;
@@ -674,13 +681,43 @@ void ADC_Initial(ADC_Module* ADCx)
     /* Enable ADC */
     ADC_Enable(ADCx, ENABLE);
     /*Check ADC Ready*/
-    while(ADC_GetFlagStatusNew(ADCx,ADC_FLAG_RDY) == RESET)
-        ;
+    while (ADC_GetFlagStatusNew(ADCx, ADC_FLAG_RDY) == RESET)
+    {
+        if (--timeout == 0U)
+        {
+            (void)ADC_DisableSafe(ADCx);
+            return 0U;
+        }
+    }
     /* Start ADC calibration */
     ADC_StartCalibration(ADCx);
     /* Check the end of ADC calibration */
+    timeout = 100000U;
     while (ADC_GetCalibrationStatus(ADCx))
-        ;
+    {
+        if (--timeout == 0U)
+        {
+            (void)ADC_DisableSafe(ADCx);
+            return 0U;
+        }
+    }
+
+    return 1U;
+}
+uint8_t ADC_DisableSafe(ADC_Module* ADCx)
+{
+    uint32_t timeout = 100000U;
+
+    ADC_Enable(ADCx, DISABLE);
+    while (ADC_GetFlagStatusNew(ADCx, ADC_FLAG_PD_RDY) == RESET)
+    {
+        if (--timeout == 0U)
+        {
+            return 0U;
+        }
+    }
+
+    return 1U;
 }
 uint16_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel)
 {
