@@ -336,6 +336,8 @@ void DebugMon_Handler(void)
  */
 void SysTick_Handler(void)
 {
+	extern void App_Tick1msISR(void);
+	App_Tick1msISR();
 }
 
 /******************************************************************************/
