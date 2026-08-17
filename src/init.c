@@ -121,7 +121,8 @@ void GPIO_Configuration(void)
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 	
 		GPIO_InitStructure.Pin       = STDBY_PIN|CHARG_PIN;////
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+    /* CHARG/STDBY are active-low status inputs; keep their idle level defined. */
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 		
 		GPIO_InitStructure.Pin       = PB_MAIN_PIN|PB_PWRP_PIN|PB_FUN_PIN;////ÏÂÀ­

@@ -1398,6 +1398,12 @@ static void App_Init(void)
 	s_charger_debounce_count = 0U;
 	s_ui.charger_connected = s_charger_stable;
 	s_ui.charger_full = (READ_STDBY == Bit_RESET) ? 1U : 0U;
+	LOG_I("t=%u app init, charger=%s charg_n=%u standby_n=%u full=%u",
+	      s_system_tick_ms,
+	      (s_ui.charger_connected != 0U) ?
+	      ((s_ui.charger_full != 0U) ? "FULL" : "CHARGING") :
+	      "DISCONNECTED",
+	      (uint8_t)READ_CHARG, (uint8_t)READ_STDBY, s_ui.charger_full);
 
 	/* 上电时优先识别充电状态，避免在接入充电器时启动治疗输出。 */
 	if (s_ui.charger_connected != 0U)
@@ -1763,14 +1769,30 @@ static void Key_PushLongEvent(KeyId_t key_id)
 
 static void Charger_Update(void)
 {
-	uint8_t connected = ((READ_STDBY == Bit_RESET) ||
-	                     (READ_CHARG == Bit_RESET)) ? 1U : 0U;
-	uint8_t full = (READ_STDBY == Bit_RESET) ? 1U : 0U;
+	uint8_t standby_n = (uint8_t)READ_STDBY;
+	uint8_t charg_n = (uint8_t)READ_CHARG;
+	uint8_t connected = ((standby_n == (uint8_t)Bit_RESET) ||
+	                     (charg_n == (uint8_t)Bit_RESET)) ? 1U : 0U;
+	uint8_t full = (standby_n == (uint8_t)Bit_RESET) ? 1U : 0U;
+
+	/* Keep a low-rate raw-pin trace so Type-C/charger hardware can be diagnosed. */
+	if ((s_system_tick_ms % 5000U) < KEY_SCAN_PERIOD_MS)
+	{
+		LOG_I("t=%u charger pins charg_n=%u standby_n=%u connected=%u full=%u",
+		      s_system_tick_ms, charg_n, standby_n, connected, full);
+	}
 
 	if (full != s_ui.charger_full)
 	{
 		s_ui.charger_full = full;
 		s_app.ui_dirty = 1U;
+		/* 拔出时两个低有效信号会同时释放，交给插拔去抖日志报告。 */
+		if ((connected != 0U) && (s_charger_stable != 0U))
+		{
+			LOG_I("t=%u charger status=%s charg_n=%u standby_n=%u",
+			      s_system_tick_ms, (full != 0U) ? "FULL" : "CHARGING",
+			      charg_n, standby_n);
+		}
 	}
 
 	if (connected != s_charger_raw)
@@ -1788,6 +1810,12 @@ static void Charger_Update(void)
 		{
 			s_charger_stable = connected;
 			s_ui.charger_connected = connected;
+			LOG_I("t=%u charger status=%s charg_n=%u standby_n=%u full=%u",
+			      s_system_tick_ms,
+			      (connected != 0U) ?
+			      ((full != 0U) ? "FULL" : "CHARGING") :
+			      "DISCONNECTED",
+			      charg_n, standby_n, full);
 			(void)EventQueue_Push((connected != 0U) ?
 			                      APP_EVENT_CHARGER_CONNECTED :
 			                      APP_EVENT_CHARGER_DISCONNECTED);
