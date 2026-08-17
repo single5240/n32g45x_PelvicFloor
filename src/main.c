@@ -1062,7 +1062,7 @@ typedef enum
 	APP_STATE_READY,         /* 已开机但尚未输出 */
 	APP_STATE_THERAPY,       /* 治疗模式 */
 	APP_STATE_PRESSURE,      /* 压力检测/充放气模式 */
-	APP_STATE_CHARGING,      /* 充电模式：禁止治疗和气泵输出 */
+	APP_STATE_CHARGING, /* Powered-off charging display; work may continue while charging. */
 	APP_STATE_FAULT          /* 故障模式：立即关闭所有危险输出 */
 } AppState_t;
 
@@ -1257,6 +1257,7 @@ static void Ui_RenderPressure(void);
 static void Ui_RenderCharging(void);
 static void Ui_ClearDisplay(void);
 static uint8_t Ui_GetBatterySegments(uint8_t level);
+static uint8_t Ui_GetBatteryDisplayLevel(void);
 static uint8_t Ui_GetDisplayMinutes(void);
 static void Ui_CycleTreatmentTime(void);
 static void Ui_Countdown1s(void);
@@ -1549,10 +1550,11 @@ static void App_StateEnter(AppState_t state)
 			 * 当前阶段只启动 UI。ADC、治疗和气泵外设继续保持关闭，
 			 * 等相应模块完成后再逐项加入这里。
 			 */
-			Board_EnterSafeState();
+			/* POWER_OFF and CHARGING are already safe source states. Keep BLEN
+			 * stable here so charge-to-work startup does not pulse the backlight off. */
 			Ui_InitModel();
-			Ui_InitHardware();
 			Battery_StartSession();
+			Ui_InitHardware();
 			Ui_RecordActivity();
 			Ui_Beep(3U);
 			App_RequestState(APP_STATE_THERAPY);
@@ -1564,12 +1566,14 @@ static void App_StateEnter(AppState_t state)
 			break;
 
 		case APP_STATE_THERAPY:
+			Ui_InitHardware();
 			s_app.work_mode = APP_MODE_THERAPY;
 			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 			s_app.ui_dirty = 1U;
 			break;
 
 		case APP_STATE_PRESSURE:
+			Ui_InitHardware();
 			s_app.work_mode = APP_MODE_PRESSURE;
 			s_ui.power_ch1 = 0U;
 			s_ui.power_ch2 = 0U;
@@ -1694,7 +1698,8 @@ static void Key_Update(KeyId_t key_id)
 
 	if (key_id == KEY_ID_POWER)
 	{
-		if (s_app.state == APP_STATE_POWER_OFF)
+		if ((s_app.state == APP_STATE_POWER_OFF) ||
+		    (s_app.state == APP_STATE_CHARGING))
 		{
 			long_threshold_ms = POWER_ON_HOLD_MS;
 		}
@@ -1776,11 +1781,11 @@ static void Charger_Update(void)
 	uint8_t full = (standby_n == (uint8_t)Bit_RESET) ? 1U : 0U;
 
 	/* Keep a low-rate raw-pin trace so Type-C/charger hardware can be diagnosed. */
-	if ((s_system_tick_ms % 5000U) < KEY_SCAN_PERIOD_MS)
-	{
-		LOG_I("t=%u charger pins charg_n=%u standby_n=%u connected=%u full=%u",
-		      s_system_tick_ms, charg_n, standby_n, connected, full);
-	}
+	// if ((s_system_tick_ms % 5000U) < KEY_SCAN_PERIOD_MS)
+	// {
+	// 	LOG_I("t=%u charger pins charg_n=%u standby_n=%u connected=%u full=%u",
+	// 	      s_system_tick_ms, charg_n, standby_n, connected, full);
+	// }
 
 	if (full != s_ui.charger_full)
 	{
@@ -1859,10 +1864,16 @@ static void App_HandleEvent(AppEvent_t event)
 	LOG_I("t=%u event=%s state=%s", s_system_tick_ms,
 	      App_EventName(event), App_StateName(s_app.state));
 
-	/* 充电状态优先级最高，接入充电器后立即退出所有工作状态。 */
+	/* Charger events update power presence without interrupting active work. */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
 	{
-		App_RequestState(APP_STATE_CHARGING);
+		/* Charger presence is parallel to normal operation. Only enter the
+		 * charging-only display when the product is currently powered off. */
+		if (s_app.state == APP_STATE_POWER_OFF)
+		{
+			App_RequestState(APP_STATE_CHARGING);
+		}
+		s_app.ui_dirty = 1U;
 		return;
 	}
 
@@ -1872,6 +1883,7 @@ static void App_HandleEvent(AppEvent_t event)
 		{
 			App_RequestState(APP_STATE_POWER_OFF);
 		}
+		s_app.ui_dirty = 1U;
 		return;
 	}
 
@@ -1884,8 +1896,16 @@ static void App_HandleEvent(AppEvent_t event)
 		return;
 	}
 
-	if ((s_app.state == APP_STATE_CHARGING) ||
-	    (s_app.state == APP_STATE_BOOTING) ||
+	if (s_app.state == APP_STATE_CHARGING)
+	{
+		if (event == APP_EVENT_POWER_LONG)
+		{
+			App_RequestState(APP_STATE_BOOTING);
+		}
+		return;
+	}
+
+	if ((s_app.state == APP_STATE_BOOTING) ||
 	    (s_app.state == APP_STATE_FAULT))
 	{
 		return;
@@ -1904,7 +1924,8 @@ static void App_HandleEvent(AppEvent_t event)
 	{
 		case APP_EVENT_POWER_LONG:
 			Ui_Beep(3U);
-			App_RequestState(APP_STATE_POWER_OFF);
+			App_RequestState((s_ui.charger_connected != 0U) ?
+			                 APP_STATE_CHARGING : APP_STATE_POWER_OFF);
 			break;
 
 		case APP_EVENT_POWER_SHORT:
@@ -2072,6 +2093,10 @@ static void Ui_InitHardware(void)
 
 	/* UI 开启期间背光常亮，不再使用无操作倒计时单独关闭背光。 */
 	BLEN_ON;
+	LOG_I("t=%u ui hardware lcd=%u blen_out=%u blen_pin=%u",
+	      s_system_tick_ms, s_ui.lcd_initialized,
+	      GPIO_ReadOutputDataBit(BLEN_PORT, BLEN_PIN),
+	      GPIO_ReadInputDataBit(BLEN_PORT, BLEN_PIN));
 }
 
 static void Ui_Shutdown(void)
@@ -2112,6 +2137,16 @@ static uint8_t Ui_GetBatterySegments(uint8_t level)
 	return segments;
 }
 
+static uint8_t Ui_GetBatteryDisplayLevel(void)
+{
+	if (s_ui.charger_connected != 0U)
+	{
+		return (s_ui.charger_full != 0U) ? 3U : s_ui.charge_frame;
+	}
+
+	return s_ui.battery_level;
+}
+
 /*
  * LCD 只显示整数分钟，因此对剩余时间向上取整：
  * 9:59～9:01 显示 10，只有到 9:00 才显示 9。
@@ -2146,7 +2181,7 @@ static void Ui_RenderTherapy(void)
 	uint8_t formula_icon = 0x10U;
 	uint8_t formula_value = (uint8_t)(s_ui.formula + 1U);
 	uint8_t ble_icon = 0x80U;
-	uint8_t battery_segments = Ui_GetBatterySegments(s_ui.battery_level);
+	uint8_t battery_segments = Ui_GetBatterySegments(Ui_GetBatteryDisplayLevel());
 
 	if (s_ui.blink_on == 0U)
 	{
@@ -2170,7 +2205,8 @@ static void Ui_RenderTherapy(void)
 		ble_icon = 0U;
 	}
 
-	if ((s_ui.battery_low != 0U) && (s_ui.blink_on == 0U))
+	if ((s_ui.charger_connected == 0U) &&
+	    (s_ui.battery_low != 0U) && (s_ui.blink_on == 0U))
 	{
 		battery_segments = 0U;
 	}
@@ -2197,7 +2233,7 @@ static void Ui_RenderPressure(void)
 	uint8_t pressure_icon = 0x80U;
 	uint8_t unit_icon = 0x80U;
 	uint8_t ble_icon = 0x80U;
-	uint8_t battery_segments = Ui_GetBatterySegments(s_ui.battery_level);
+	uint8_t battery_segments = Ui_GetBatterySegments(Ui_GetBatteryDisplayLevel());
 	uint8_t pressure_hundreds;
 	uint8_t pressure_tens;
 	uint8_t pressure_ones;
@@ -2234,7 +2270,8 @@ static void Ui_RenderPressure(void)
 		ble_icon = 0U;
 	}
 
-	if ((s_ui.battery_low != 0U) && (s_ui.blink_on == 0U))
+	if ((s_ui.charger_connected == 0U) &&
+	    (s_ui.battery_low != 0U) && (s_ui.blink_on == 0U))
 	{
 		battery_segments = 0U;
 	}
@@ -2254,7 +2291,7 @@ static void Ui_RenderPressure(void)
 
 static void Ui_RenderCharging(void)
 {
-	uint8_t level = s_ui.charger_full ? 3U : s_ui.charge_frame;
+	uint8_t level = Ui_GetBatteryDisplayLevel();
 
 	Ui_ClearDisplay();
 	write_LCD(1U, 20U, Ui_GetBatterySegments(level));
@@ -2935,7 +2972,7 @@ static void Sensor_Task100ms(void)
 
 static void Power_Task1000ms(void)
 {
-	if (s_app.state == APP_STATE_CHARGING)
+	if (s_ui.charger_connected != 0U)
 	{
 		if (s_ui.charger_full == 0U)
 		{

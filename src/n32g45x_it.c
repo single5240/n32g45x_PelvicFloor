@@ -1298,13 +1298,8 @@ void TIM5_IRQHandler(void)///作为通用定时器使用
 				{
 					hh=0;
 					
-					if(Bl_Cnt)////背光点亮计数
-					{
-						Bl_Cnt--;
-						BLEN_ON;
-					}
-					else
-						BLEN_OFF;
+					/* BLEN is owned by the application state machine. The legacy
+					 * timer must not override the active UI backlight state. */
 					if(Charg_Flag)
 					{
 						kk++;
