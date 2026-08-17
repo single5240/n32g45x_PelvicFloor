@@ -1194,6 +1194,7 @@ typedef struct
 
 typedef struct
 {
+	uint8_t session_active;
 	uint8_t adc_initialized;
 	uint8_t measurement_pending;
 	uint8_t next_sample_ticks;
@@ -1530,6 +1531,7 @@ static void App_StateEnter(AppState_t state)
 
 		case APP_STATE_CHARGING:
 			Board_EnterSafeState();
+			Battery_StartSession();
 			Ui_InitHardware();
 			s_ui.beep_remaining = 0U;
 			s_ui.beep_on_ms = 0U;
@@ -1553,7 +1555,10 @@ static void App_StateEnter(AppState_t state)
 			/* POWER_OFF and CHARGING are already safe source states. Keep BLEN
 			 * stable here so charge-to-work startup does not pulse the backlight off. */
 			Ui_InitModel();
-			Battery_StartSession();
+			if (s_battery.session_active == 0U)
+			{
+				Battery_StartSession();
+			}
 			Ui_InitHardware();
 			Ui_RecordActivity();
 			Ui_Beep(3U);
@@ -2386,6 +2391,7 @@ void AppUi_InflationCompleted(void)
 
 static void Battery_InitModel(void)
 {
+	s_battery.session_active = 0U;
 	s_battery.adc_initialized = 0U;
 	s_battery.measurement_pending = 0U;
 	s_battery.next_sample_ticks = 0U;
@@ -2407,12 +2413,14 @@ static void Battery_StartSession(void)
 	/* 每次开机重新建立滤波初值，避免沿用上一次关机前的数据。 */
 	Battery_Stop();
 	Battery_InitModel();
+	s_battery.session_active = 1U;
 	AppUi_SetBattery(0U, 0U);
 }
 
 static void Battery_Stop(void)
 {
 	BATEN_OFF;
+	s_battery.session_active = 0U;
 	s_battery.measurement_pending = 0U;
 	s_battery.next_sample_ticks = 0U;
 
@@ -2686,7 +2694,8 @@ static void Battery_Task100ms(void)
 {
 	uint16_t battery_adc;
 	uint16_t reference_adc;
-	uint8_t working_state = ((s_app.state == APP_STATE_READY) ||
+	uint8_t working_state = ((s_app.state == APP_STATE_CHARGING) ||
+	                         (s_app.state == APP_STATE_READY) ||
 	                         (s_app.state == APP_STATE_THERAPY) ||
 	                         (s_app.state == APP_STATE_PRESSURE)) ? 1U : 0U;
 
