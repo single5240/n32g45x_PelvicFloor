@@ -1,0 +1,5 @@
+/MDK-ARM/*
+!/MDK-ARM/Main.uvprojx
+
+# Editor/merge backup files
+*.orig
