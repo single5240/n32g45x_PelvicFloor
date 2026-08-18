@@ -43,12 +43,6 @@
 const uint8_t NUM1[] = {0xaf, 0x06, 0x6d, 0x4f, 0xc6, 0xcb, 0xeb, 0x0e, 0xef, 0xcf, 0x00};
 const uint8_t NUM2[] = {0x5f, 0x06, 0x3d, 0x2f, 0x66, 0x6b, 0x7b, 0x0e, 0x7f, 0x6f, 0x00};
 
-uint8_t BEL_ReadData[6] = {0};
-
-uint8_t BEL_Flag = 0;
-uint8_t BEL_Beat_Flag = 0;
-uint16_t BEL_Count;
-
 uint8_t AIRIN_Logo = 0x10; /// 充气图标
 uint8_t CH1_Logo = 0x10;   ////1通道图标
 uint8_t FORM_Logo = 0x10;  ////模式图标
@@ -68,32 +62,7 @@ uint8_t Bat_Value3 = 0x20; ////电池电量三格图标
 
 
 uint16_t TIM2_PrescalerValue = 0;
-uint16_t TIM5_PrescalerValue = 0;
 
-uint8_t Key_Down_PB_MAIN = 0;
-uint8_t Key_Up_PB_MAIN = 0;
-uint16_t Key_DownTime_PB_MAIN = 0;
-uint16_t Key_UpTime_PB_MAIN = 0;
-
-uint8_t Key_Down_PB_FUN = 0;
-uint8_t Key_Up_PB_FUN = 0;
-uint16_t Key_DownTime_PB_FUN = 0;
-uint16_t Key_UpTime_PB_FUN = 0;
-
-uint8_t Key_Down_PB_SS = 0;
-uint8_t Key_Up_PB_SS = 0;
-uint16_t Key_DownTime_PB_SS = 0;
-uint16_t Key_UpTime_PB_SS = 0;
-
-uint8_t Key_Down_PB_PWRM = 0;
-uint8_t Key_Up_PB_PWRM = 0;
-uint16_t Key_DownTime_PB_PWRM = 0;
-uint16_t Key_UpTime_PB_PWRM = 0;
-
-uint8_t Key_Down_PB_PWRP = 0;
-uint8_t Key_Up_PB_PWRP = 0;
-uint16_t Key_DownTime_PB_PWRP = 0;
-uint16_t Key_UpTime_PB_PWRP = 0;
 
 uint8_t Set_Minute = 30; ////开机默�?30分钟
 uint8_t Minute = 30;	 ////开机默�?30分钟
@@ -462,7 +431,7 @@ static void Pressure_StopOutputs(void)
 	SWEN_OFF;
 }
 
-/* 初始化应用状态，不在这里执行耗时或阻塞操作�? */
+/* 初始化应用状态，不在这里执行耗时或阻塞操作 */
 static void App_Init(void)
 {
 	s_app.state = APP_STATE_POWER_OFF;
@@ -494,7 +463,7 @@ static void App_Init(void)
 	      "DISCONNECTED",
 	      (uint8_t)READ_CHARG, (uint8_t)READ_STDBY, s_ui.charger_full);
 
-	/* 上电时优先识别充电状态，避免在接入充电器时启动治疗输出�? */
+	/* 上电时优先识别充电状态 */
 	if (s_ui.charger_connected != 0U)
 	{
 		App_RequestState(APP_STATE_CHARGING);
@@ -1239,7 +1208,7 @@ static uint8_t Ui_GetBatteryDisplayLevel(void)
 
 /*
  * LCD 只显示整数分钟，因此对剩余时间向上取整：
- * 9:59�?9:01 显示 10，只有到 9:00 才显�? 9�?
+ * 9:59-9:01 显示 10，只有到 9:00 才显示 9:00
  */
 static uint8_t Ui_GetDisplayMinutes(void)
 {
@@ -1275,7 +1244,7 @@ static void Ui_RenderTherapy(void)
 
 	if (s_ui.blink_on == 0U)
 	{
-		/* P 图标与处方数字作为一个整体闪烁�? */
+		/* P 图标与处方数字作为一个整体闪烁 */
 		formula_icon = 0U;
 		formula_value = 10U;
 		if (s_ui.selected_channel == 0U)
@@ -1409,7 +1378,7 @@ static void Ui_Render(void)
 			break;
 
 		case APP_STATE_FAULT:
-			/* 当前 LCD 无字母字模，故障界面暂时清屏并保留背光�? */
+			/* 当前 LCD 无字母字模，故障界面暂时清屏并保留背光 */
 			Ui_ClearDisplay();
 			break;
 

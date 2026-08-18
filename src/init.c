@@ -67,8 +67,6 @@ void RCC_Configuration(void)
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM3, ENABLE);
 //    /* TIM4 clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM4, ENABLE);
-    /* TIM5 clock enable */
-    RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM5, ENABLE);
     /* TIM6 Periph clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM6, ENABLE);
     /* Enable USARTy and USARTz Clock */
@@ -397,28 +395,6 @@ void TIM4_Configuration(void)////MOTO
     /* TIM3 enable counter */
     TIM_Enable(TIM4, ENABLE);
 }
-void TIM5_Configuration(void)////通用定时器
-{
-    TIM_TimeBaseInitType TIM_TimeBaseStructure;
-
-    TIM5_PrescalerValue = 7; //(uint16_t) (SystemCoreClock / 12000000) - 1;
-
-    /* Time base configuration */
-    TIM_TimeBaseStructure.Period    = 7999;////(7+1)*(7999+1)/64=1ms
-    TIM_TimeBaseStructure.Prescaler = 0;
-    TIM_TimeBaseStructure.ClkDiv    = 0;
-    TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_UP;
-
-    TIM_InitTimeBase(TIM5, &TIM_TimeBaseStructure);
-    /* Prescaler configuration */
-    TIM_ConfigPrescaler(TIM5, TIM5_PrescalerValue, TIM_PSC_RELOAD_MODE_IMMEDIATE);
-
-    /* TIM2 enable update irq */
-    TIM_ConfigInt(TIM5, TIM_INT_UPDATE, ENABLE);
-
-    /* TIM2 enable counter */
-    TIM_Enable(TIM5, ENABLE);
-}
 /**
  * @brief  TIM6 Init.
  */
@@ -426,7 +402,7 @@ void TIM6_Configuration(void)////DAC 时钟
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
-    /* TIM5 Configuration */
+    /* TIM6 configuration */
     TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);
     TIM_TimeBaseStructure.Period    = 639;
     TIM_TimeBaseStructure.Prescaler = 0;
@@ -522,13 +498,6 @@ void NVIC_Configuration(void)
 ////    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
 ////    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
 ////    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-
-    /* Enable the TIM2 global Interrupt */
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM5_IRQn;
-//    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-//    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
-//    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 
     /* Enable the USART2 Interrupt */

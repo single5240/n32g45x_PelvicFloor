@@ -43,7 +43,6 @@ extern "C" {
 #include "init.h"
 #include "delay.h"
 #include "tm1621c.h"
-#include "AppHandle.h"
 
 #define TM1621B_CS_PORT							GPIOC
 #define TM1621B_CS_PIN 							GPIO_PIN_13
