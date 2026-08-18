@@ -1,5 +1,72 @@
-/MDK-ARM/*
-!/MDK-ARM/Main.uvprojx
+# -----------------------------------------------------------------------------
+# Build output
+# -----------------------------------------------------------------------------
+build/
+out/
+dist/
+Debug/
+Release/
+cmake-build-*/
+
+# ARM/Keil MDK generated files
+MDK-ARM/Objects/
+MDK-ARM/Listings/
+MDK-ARM/*.uvoptx
+MDK-ARM/*.uvguix*
+MDK-ARM/*.scvd
+MDK-ARM/.vscode/
+MDK-ARM/JLinkLog.txt
+MDK-ARM/JLinkSettings.ini
+MDK-ARM/*.axf
+MDK-ARM/*.hex
+MDK-ARM/*.bin
+MDK-ARM/*.map
+MDK-ARM/*.lst
+MDK-ARM/*.o
+MDK-ARM/*.d
+MDK-ARM/*.crf
+MDK-ARM/*.htm
+MDK-ARM/*.lnp
+
+# IAR EWARM generated files (keep .eww/.ewp/.ewd project files)
+EWARM/Debug/
+EWARM/Release/
+EWARM/settings/
+EWARM/*.dep
+EWARM/*.pbd
+EWARM/*.pbi
+EWARM/*.browse
+EWARM/*.out
+EWARM/*.map
+EWARM/*.hex
+EWARM/*.bin
+EWARM/*.elf
+
+# Generic compiler outputs
+*.o
+*.obj
+*.elf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.d
+*.crf
+*.dep
+*.bak
+*.tmp
+*.log
+
+# IDE/editor and operating-system files
+.vscode/*.log
+.vscode/*.code-workspace
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 
 # Editor/merge backup files
 *.orig
