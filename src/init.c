@@ -27,11 +27,7 @@
 
 /**
  * @file init.c
-<<<<<<< .mine
  * @author Nations
-=======
- * @author Nations
->>>>>>> .r78072
  * @version v1.0.0
  *
  * @copyright Copyright (c) 2019, Nations Technologies Inc. All rights reserved.
@@ -58,7 +54,7 @@ void RCC_Configuration(void)
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOD, ENABLE);
 
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_AFIO, ENABLE);
-    /* TIM1 clock enable */
+    /* Treatment PWM timer */
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_TIM1, ENABLE);
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_TIM8, ENABLE);
     /* TIM2 clock enable */
@@ -105,8 +101,8 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
     GPIO_InitPeripheral(GPIOA, &GPIO_InitStructure);
 
-		GPIO_InitStructure.Pin       = IN1L_PIN|IN1R_PIN|IN2L_PIN;///TIM1_CH1,CH2,TIM8_CH1N,TIM2_CH1,CH2
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+		GPIO_InitStructure.Pin       = IN1L_PIN|IN1R_PIN|IN2L_PIN;/* TIM1_CH1, CH2, CH1N */
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitPeripheral(GPIOA, &GPIO_InitStructure);
 	
@@ -127,10 +123,17 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 		
-		GPIO_InitStructure.Pin       = IN2R_PIN|BUZZ_PIN|MOTOEN_PIN;///TIM8_CH2N,TIM3_CH4,TIM4_CH4
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+		/* Treatment PWM output: TIM8_CH2N. */
+		GPIO_InitStructure.Pin       = IN2R_PIN;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+
+		/* Keep the existing peripheral functions for buzzer and motor PWM. */
+		GPIO_InitStructure.Pin       = BUZZ_PIN|MOTOEN_PIN;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 		
 		GPIO_InitStructure.Pin       = TM1621B_CS_PIN|TM1621B_CLK_PIN|TM1621B_DATA_PIN;/////
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
@@ -165,20 +168,21 @@ void TIM1_Configuration(void)
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
     OCInitType TIM_OCInitStructure;
     /* Time base configuration */
-		TIM_TimeBaseStructure.Period    = 7999;////way1:2kHZ
+	TIM_TimeBaseStructure.Period    = 9999;/* 16 MHz / 10000 = 1600 Hz; alternating L/R gives 800 Hz biphasic groups */
     TIM_TimeBaseStructure.Prescaler = 7;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_DOWN;
     TIM_TimeBaseStructure.RepetCnt  = 0;
 
     TIM_InitTimeBase(TIM1, &TIM_TimeBaseStructure);
+    TIM_ConfigArPreload(TIM1, ENABLE);
 
     /* PWM1 Mode configuration: Channel1 *////1L
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM2;/* 300 us pulse at the end of each 625 us slot. */
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;///输出使能
-    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///占空比=Pulse/Period
-    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先级
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
+    TIM_OCInitStructure.Pulse        = 4800;/* 300 us at 16 MHz */
+    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
     TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -186,11 +190,11 @@ void TIM1_Configuration(void)
     TIM_InitOc1(TIM1, &TIM_OCInitStructure);
 
     /* PWM1 Mode configuration: Channel2 *////1R
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM2;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;///输出使能
-    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///占空比=Pulse/Period
-    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先级
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
+    TIM_OCInitStructure.Pulse        = 4800;/* 300 us at 16 MHz */
+    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
     TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -203,12 +207,15 @@ void TIM1_Configuration(void)
     /* TIM1 enable counter */
     
 	TIM_ConfigInt(TIM1, TIM_INT_UPDATE, ENABLE);
+	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
+	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
 	TIM_Enable(TIM1, ENABLE);
     
 }
 /**
  * @brief  Configures tim8 clocks.
  */
+#if 0 /* Legacy TIM8 treatment output; replaced by TIM1 CH1/CH1N and CH2/CH2N. */
 void TIM8_Configuration(void)
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
@@ -226,8 +233,8 @@ void TIM8_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;///输出使能
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///占空比=Pulse/Period
-    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先级
+    TIM_OCInitStructure.Pulse        = 7800;///占空�?=Pulse/Period
+    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
     TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -238,8 +245,8 @@ void TIM8_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
 //    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;///输出使能
 //    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///占空比=Pulse/Period
-//    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先级
+    TIM_OCInitStructure.Pulse        = 7800;///占空�?=Pulse/Period
+//    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
 //    TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
 //    TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
 //    TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -253,8 +260,41 @@ void TIM8_Configuration(void)
     TIM_Enable(TIM8, ENABLE);
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
 }
+#endif
 
-//void TIM3_Configuration(void)////通用定时器
+/* TIM8 schedules the second treatment bridge (IN2L/IN2R). */
+void TIM8_Configuration(void)
+{
+    TIM_TimeBaseInitType time_base;
+    OCInitType oc_init;
+
+    time_base.Period    = 9999U;
+    time_base.Prescaler = 7U;
+    time_base.ClkDiv    = 0U;
+    time_base.CntMode   = TIM_CNT_MODE_DOWN;
+    time_base.RepetCnt  = 0U;
+    TIM_InitTimeBase(TIM8, &time_base);
+    TIM_ConfigArPreload(TIM8, ENABLE);
+
+    oc_init.OcMode       = TIM_OCMODE_PWM2;
+    oc_init.OutputState  = TIM_OUTPUT_STATE_DISABLE;
+    oc_init.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
+    oc_init.Pulse        = 4800U;
+    oc_init.OcPolarity   = TIM_OC_POLARITY_HIGH;
+    oc_init.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
+    oc_init.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
+    oc_init.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
+    TIM_InitOc1(TIM8, &oc_init);
+    TIM_InitOc2(TIM8, &oc_init);
+
+    TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
+    TIM_ConfigInt(TIM8, TIM_INT_UPDATE, ENABLE);
+    TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
+    TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
+    TIM_Enable(TIM8, ENABLE);
+}
+
+//void TIM3_Configuration(void)////通用定时�?
 //{
 //    TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
@@ -342,7 +382,7 @@ void TIM3_Configuration(void)////BUZZ
 /**
  * @brief  Configures tim4 clocks.
  */
-void TIM2_Configuration(void)////通用定时器
+void TIM2_Configuration(void)////通用定时�?
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
@@ -414,7 +454,7 @@ void TIM6_Configuration(void)////DAC 时钟
     TIM_SelectOutputTrig(TIM6, TIM_TRGO_SRC_UPDATE);
 }
 
-void USART2_Configuration(void)////上位机
+void USART2_Configuration(void)////上位�?
 {
     USART_InitType USART_InitStructure;
     /* USARTy and USARTz configuration ------------------------------------------------------*/
@@ -422,19 +462,19 @@ void USART2_Configuration(void)////上位机
     USART_InitStructure.BaudRate            = 115200;
     USART_InitStructure.WordLength          = USART_WL_8B;
     USART_InitStructure.StopBits            = USART_STPB_1;
-    USART_InitStructure.Parity              = USART_PE_NO;///检验模式
+    USART_InitStructure.Parity              = USART_PE_NO;///检验模�?
     USART_InitStructure.HardwareFlowControl = USART_HFCTRL_NONE;
     USART_InitStructure.Mode                = USART_MODE_RX | USART_MODE_TX;
 
     /* Configure USARTy */
     USART_Init(USART2, &USART_InitStructure);
     /* Enable USARTz Receive interrupts */
-    USART_ConfigInt(USART2, USART_INT_RXDNE, ENABLE);////开启接收中断
-//    USART_ConfigInt(USART1, USART_INT_TXDE, ENABLE);///开启发送中断
+    USART_ConfigInt(USART2, USART_INT_RXDNE, ENABLE);////开启接收中�?
+//    USART_ConfigInt(USART1, USART_INT_TXDE, ENABLE);///开启发送中�?
     /* Enable the USARTy */
     USART_Enable(USART2, ENABLE);
 }
-//void USART3_Configuration(void)////上位机
+//void USART3_Configuration(void)////上位�?
 //{
 //    USART_InitType USART_InitStructure;
 //    /* USARTy and USARTz configuration ------------------------------------------------------*/
@@ -442,15 +482,15 @@ void USART2_Configuration(void)////上位机
 //    USART_InitStructure.BaudRate            = 115200;
 //    USART_InitStructure.WordLength          = USART_WL_8B;
 //    USART_InitStructure.StopBits            = USART_STPB_1;
-//    USART_InitStructure.Parity              = USART_PE_NO;///检验模式
+//    USART_InitStructure.Parity              = USART_PE_NO;///检验模�?
 //    USART_InitStructure.HardwareFlowControl = USART_HFCTRL_NONE;
 //    USART_InitStructure.Mode                = USART_MODE_RX | USART_MODE_TX;
 
 //    /* Configure USARTy */
 //    USART_Init(USART3, &USART_InitStructure);
 //    /* Enable USARTz Receive interrupts */
-//    USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);////开启接收中断
-//    //		USART_ConfigInt(USART3, USART_INT_TXDE, ENABLE);///开启发送中断
+//    USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);////开启接收中�?
+//    //		USART_ConfigInt(USART3, USART_INT_TXDE, ENABLE);///开启发送中�?
 //    /* Enable the USARTy */
 //    USART_Enable(USART3, ENABLE);
 //}
@@ -462,15 +502,15 @@ void USART2_Configuration(void)////上位机
 //    USART_InitStructure.BaudRate            = 115200;
 //    USART_InitStructure.WordLength          = USART_WL_8B;
 //    USART_InitStructure.StopBits            = USART_STPB_1;
-//    USART_InitStructure.Parity              = USART_PE_NO;///检验模式
+//    USART_InitStructure.Parity              = USART_PE_NO;///检验模�?
 //    USART_InitStructure.HardwareFlowControl = USART_HFCTRL_NONE;
 //    USART_InitStructure.Mode                = USART_MODE_RX | USART_MODE_TX;
 
 //    /* Configure USARTy */
 //    USART_Init(UART5, &USART_InitStructure);
 //    /* Enable USARTz Receive interrupts */
-//    USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);////开启接收中断
-//    //		USART_ConfigInt(UART4, USART_INT_TXDE, ENABLE);///开启发送中断
+//    USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);////开启接收中�?
+//    //		USART_ConfigInt(UART4, USART_INT_TXDE, ENABLE);///开启发送中�?
 //    /* Enable the USARTy */
 //    USART_Enable(UART5, ENABLE);
 //}
@@ -487,19 +527,15 @@ void NVIC_Configuration(void)
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
+    NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_UP_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
     /* Enable the TIM2 global Interrupt */
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM2_IRQn;
 //    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
 //    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
 //    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
-    /* Enable the TIM8 global Interrupt */
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_UP_IRQn;
-////    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-////    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
-////    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-
     /* Enable the USART2 Interrupt */
     NVIC_InitStructure.NVIC_IRQChannel            = USART2_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
@@ -516,7 +552,7 @@ void DAC_ChannelConfig(void)
     DAC_InitType DAC_InitStructure;
 
     /* DAC channel1 Configuration */
-    DAC_InitStructure.Trigger          = DAC_TRG_T6_TRGO;////T6定时器触发
+    DAC_InitStructure.Trigger          = DAC_TRG_T6_TRGO;////T6定时器触�?
     DAC_InitStructure.WaveGen          = DAC_WAVEGEN_NOISE;
     DAC_InitStructure.LfsrUnMaskTriAmp = DAC_UNMASK_LFSRBIT0;
     DAC_InitStructure.BufferOutput     = DAC_BUFFOUTPUT_ENABLE;///输出使能

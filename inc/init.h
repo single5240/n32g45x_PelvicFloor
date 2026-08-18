@@ -8,11 +8,7 @@
 
 /**
  * @file init.h
-<<<<<<< .mine
  * @author Nations
-=======
- * @author Nations
->>>>>>> .r78072
  * @version v1.0.0
  *
  * @copyright Copyright (c) 2019, Nations Technologies Inc. All rights reserved.

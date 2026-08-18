@@ -73,14 +73,14 @@ uint8_t Formula = 0;  ////处方0,1,2�?
 uint8_t Ico_Formula = 0;
 uint8_t Pwr1 = 0; /////0-60档强�?
 uint8_t Pwr2 = 0;
+volatile uint8_t TreatmentPwmEnableCh1 = 0U;
+volatile uint8_t TreatmentPwmEnableCh2 = 0U;
 uint16_t Press_Value = 0; /// 压力�?
 uint16_t Buzz_cnt = 0;	  /// 蜂鸣器时�?
 uint8_t Flash_Flag = 0;	  ////闪烁标志�?
 uint8_t Charg_Flag = 0;	  ////充电中标志位
 uint8_t Chargok_Flag = 1; ////充满电标志位
 
-uint16_t Tim1_Count = 0;
-uint16_t Tim8_Count = 0;
 
 uint8_t Mode_Change = 0;
 
@@ -369,6 +369,13 @@ static void Board_Init(void)
 	RCC_Configuration();
 	GPIO_Configuration();
 	SystemCoreClockUpdate();
+	DAC_ChannelConfig();
+	DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
+	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
+	TIM6_Configuration();
+	TIM1_Configuration();
+	TIM8_Configuration();
+	NVIC_Configuration();
 	SEGGER_RTT_Init();
 	LOG_I("t=%u system init, core=%u Hz", s_system_tick_ms, SystemCoreClock);
 
@@ -409,15 +416,22 @@ static void Treatment_StopOutputs(void)
 	s_ui.power_ch2 = 0U;
 	Pwr1 = 0U;
 	Pwr2 = 0U;
+	TreatmentPwmEnableCh1 = 0U;
+	TreatmentPwmEnableCh2 = 0U;
 
-	TIM_SetCmp1(TIM1, 0U);
-	TIM_SetCmp2(TIM1, 0U);
+	/* Keep the hardware 300 us compare value ready for the next treatment. */
+	TIM_SetCmp1(TIM1, 4800U);
+	TIM_SetCmp2(TIM1, 4800U);
+	TIM_SetCmp1(TIM8, 4800U);
+	TIM_SetCmp2(TIM8, 4800U);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
 	TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
 	TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+	TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
+	TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
 	DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
 	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
 }
@@ -1975,7 +1989,42 @@ static void AppEvent_Task10ms(void)
 
 static void Control_Task10ms(void)
 {
+	static uint8_t previous_pwr1;
+	static uint8_t previous_pwr2;
+
 	Ui_BuzzerTask10ms();
+
+	/* PWM-only treatment: each nonzero UI level enables its own channel.
+	 * The countdown and state checks are the common safety interlock. */
+	TreatmentPwmEnableCh1 = ((s_app.state == APP_STATE_THERAPY) &&
+	                        ((s_ui.remaining_minutes != 0U) ||
+	                         (s_ui.remaining_seconds != 0U)) &&
+	                        (s_ui.power_ch1 != 0U)) ? 1U : 0U;
+	TreatmentPwmEnableCh2 = ((s_app.state == APP_STATE_THERAPY) &&
+	                        ((s_ui.remaining_minutes != 0U) ||
+	                         (s_ui.remaining_seconds != 0U)) &&
+	                        (s_ui.power_ch2 != 0U)) ? 1U : 0U;
+
+	if ((previous_pwr1 == 0U) && (TreatmentPwmEnableCh1 != 0U))
+	{
+		LOG_I("t=%u treatment ch1 pulse start", s_system_tick_ms);
+	}
+	else if ((previous_pwr1 != 0U) && (TreatmentPwmEnableCh1 == 0U))
+	{
+		LOG_I("t=%u treatment ch1 pulse stop", s_system_tick_ms);
+	}
+
+	if ((previous_pwr2 == 0U) && (TreatmentPwmEnableCh2 != 0U))
+	{
+		LOG_I("t=%u treatment ch2 pulse start", s_system_tick_ms);
+	}
+	else if ((previous_pwr2 != 0U) && (TreatmentPwmEnableCh2 == 0U))
+	{
+		LOG_I("t=%u treatment ch2 pulse stop", s_system_tick_ms);
+	}
+
+	previous_pwr1 = TreatmentPwmEnableCh1;
+	previous_pwr2 = TreatmentPwmEnableCh2;
 
 	/*
 	 * UI 联调阶段不驱动气泵。充气保持到再次轻按或控制模块通知完成�?

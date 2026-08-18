@@ -39,8 +39,6 @@ uint16_t ChB_DACValue = 4090;
 
 
 extern uint16_t Buzz_cnt;
-extern uint16_t Tim1_Count;
-extern uint16_t Tim8_Count;
 
 extern uint8_t Set_Minute; ////开机默认30分钟
 extern uint8_t Minute;	   ////开机默认30分钟
@@ -50,6 +48,8 @@ extern uint8_t Formula;	 /////处方0，1,2
 extern uint8_t WorkType; ////0:治疗模式，1：检测模式
 extern uint8_t Pwr1;	 /////0-60档强度
 extern uint8_t Pwr2;
+extern volatile uint8_t TreatmentPwmEnableCh1;
+extern volatile uint8_t TreatmentPwmEnableCh2;
 
 extern uint8_t Flash_Flag;
 
@@ -111,6 +111,8 @@ uint16_t Pwr2_ADCValue;
 uint16_t Pwr1_ADCValue;
 uint16_t E1_Power = 0;
 uint16_t E2_Power = 0;
+
+static void TreatmentChannelB_Update(void);
 
 uint8_t Key_SelectA = 3;
 uint8_t Time_Flag = 0;
@@ -267,11 +269,155 @@ void USART2_IRQHandler(void)
  */
 
 uint16_t Set_Value = 55;
+
+enum
+{
+    TREATMENT_PHASE_POSITIVE = 0U,
+    TREATMENT_PHASE_DEAD_1,
+    TREATMENT_PHASE_NEGATIVE,
+    TREATMENT_PHASE_DEAD_2,
+    TREATMENT_PHASE_IDLE
+};
+
+#define TREATMENT_PERIOD_TICKS  20000U
+#define TREATMENT_PULSE_TICKS    4800U /* 300 us at 16 MHz */
+#define TREATMENT_DEAD_TICKS     1600U /* 100 us at 16 MHz; leaves ISR margin for two channels */
+#define TREATMENT_IDLE_TICKS    (TREATMENT_PERIOD_TICKS - (2U * TREATMENT_PULSE_TICKS) - (2U * TREATMENT_DEAD_TICKS))
+
+static uint8_t s_treatment_phase_ch1;
+static uint8_t s_treatment_phase_ch2;
+
+static void TreatmentSetSegment(TIM_Module *timer, uint16_t ticks)
+{
+    timer->AR = ticks - 1U;
+    timer->CNT = ticks - 1U;
+}
+
+static void TreatmentChannel1_Off(void)
+{
+    GPIO_ResetBits(IN1L_PORT, IN1L_PIN | IN1R_PIN);
+}
+
+static void TreatmentChannel2_Off(void)
+{
+    GPIO_ResetBits(IN2L_PORT, IN2L_PIN);
+    GPIO_ResetBits(IN2R_PORT, IN2R_PIN);
+}
+
+static void TreatmentChannel1_NextPhase(void)
+{
+    if (TreatmentPwmEnableCh1 == 0U)
+    {
+        TreatmentChannel1_Off();
+        s_treatment_phase_ch1 = TREATMENT_PHASE_POSITIVE;
+        TreatmentSetSegment(TIM1, TREATMENT_PERIOD_TICKS);
+        return;
+    }
+
+    switch (s_treatment_phase_ch1)
+    {
+    case TREATMENT_PHASE_POSITIVE:
+        GPIO_ResetBits(IN1R_PORT, IN1R_PIN);
+        GPIO_SetBits(IN1L_PORT, IN1L_PIN);
+        TreatmentSetSegment(TIM1, TREATMENT_PULSE_TICKS);
+        s_treatment_phase_ch1 = TREATMENT_PHASE_DEAD_1;
+        break;
+    case TREATMENT_PHASE_DEAD_1:
+        TreatmentChannel1_Off();
+        TreatmentSetSegment(TIM1, TREATMENT_DEAD_TICKS);
+        s_treatment_phase_ch1 = TREATMENT_PHASE_NEGATIVE;
+        break;
+    case TREATMENT_PHASE_NEGATIVE:
+        GPIO_ResetBits(IN1L_PORT, IN1L_PIN);
+        GPIO_SetBits(IN1R_PORT, IN1R_PIN);
+        TreatmentSetSegment(TIM1, TREATMENT_PULSE_TICKS);
+        s_treatment_phase_ch1 = TREATMENT_PHASE_DEAD_2;
+        break;
+    case TREATMENT_PHASE_DEAD_2:
+        TreatmentChannel1_Off();
+        TreatmentSetSegment(TIM1, TREATMENT_DEAD_TICKS);
+        s_treatment_phase_ch1 = TREATMENT_PHASE_IDLE;
+        break;
+    default:
+        TreatmentChannel1_Off();
+        TreatmentSetSegment(TIM1, TREATMENT_IDLE_TICKS);
+        s_treatment_phase_ch1 = TREATMENT_PHASE_POSITIVE;
+        break;
+    }
+}
+
+static void TreatmentChannel2_NextPhase(void)
+{
+    if (TreatmentPwmEnableCh2 == 0U)
+    {
+        TreatmentChannel2_Off();
+        s_treatment_phase_ch2 = TREATMENT_PHASE_POSITIVE;
+        TreatmentSetSegment(TIM8, TREATMENT_PERIOD_TICKS);
+        return;
+    }
+
+    switch (s_treatment_phase_ch2)
+    {
+    case TREATMENT_PHASE_POSITIVE:
+        GPIO_ResetBits(IN2R_PORT, IN2R_PIN);
+        GPIO_SetBits(IN2L_PORT, IN2L_PIN);
+        TreatmentSetSegment(TIM8, TREATMENT_PULSE_TICKS);
+        s_treatment_phase_ch2 = TREATMENT_PHASE_DEAD_1;
+        break;
+    case TREATMENT_PHASE_DEAD_1:
+        TreatmentChannel2_Off();
+        TreatmentSetSegment(TIM8, TREATMENT_DEAD_TICKS);
+        s_treatment_phase_ch2 = TREATMENT_PHASE_NEGATIVE;
+        break;
+    case TREATMENT_PHASE_NEGATIVE:
+        GPIO_ResetBits(IN2L_PORT, IN2L_PIN);
+        GPIO_SetBits(IN2R_PORT, IN2R_PIN);
+        TreatmentSetSegment(TIM8, TREATMENT_PULSE_TICKS);
+        s_treatment_phase_ch2 = TREATMENT_PHASE_DEAD_2;
+        break;
+    case TREATMENT_PHASE_DEAD_2:
+        TreatmentChannel2_Off();
+        TreatmentSetSegment(TIM8, TREATMENT_DEAD_TICKS);
+        s_treatment_phase_ch2 = TREATMENT_PHASE_IDLE;
+        break;
+    default:
+        TreatmentChannel2_Off();
+        TreatmentSetSegment(TIM8, TREATMENT_IDLE_TICKS);
+        s_treatment_phase_ch2 = TREATMENT_PHASE_POSITIVE;
+        break;
+    }
+}
+
 void TIM1_UP_IRQHandler(void)
 {
 	if (TIM_GetIntStatus(TIM1, TIM_INT_UPDATE) != RESET)
 	{
-		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE); // 250us
+		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
+
+		/* The timer hardware makes the 300 us pulse; this only selects polarity. */
+		if (TreatmentPwmEnableCh1 != 0U)
+		{
+			if (s_treatment_phase_ch1 == 0U)
+			{
+				TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_ENABLE);
+				TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+				s_treatment_phase_ch1 = 1U;
+			}
+			else
+			{
+				TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
+				TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_ENABLE);
+				s_treatment_phase_ch1 = 0U;
+			}
+		}
+		else
+		{
+			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
+			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+			s_treatment_phase_ch1 = 0U;
+		}
+		return;
+
 		if (Pwr1)									////
 		{
 			E1_Step++;
@@ -510,7 +656,6 @@ void TIM1_UP_IRQHandler(void)
 					if (E1_Step < 1800)
 					{
 						Pwr1_ADCValue = 0;
-						Pwr2_ADCValue = 0;
 					}
 					else
 					{
@@ -579,34 +724,53 @@ void TIM1_UP_IRQHandler(void)
 				ChA_DACValue = 300;
 			}
 			DAC_SetCh2Data(DAC_ALIGN_R_12BIT, ChA_DACValue);
-			Tim1_Count++;
-			if (Tim1_Count == 1)
-			{
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_ENABLE);
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-			}
-			else if (Tim1_Count == 2)
-			{
-				Tim1_Count = 0;
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_ENABLE);
-			}
+			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_ENABLE);
+			TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_ENABLE);
 		}
 		else
 		{
-
 			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+			TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
 		}
+
+		TreatmentChannelB_Update();
 	}
 }
 
 void TIM8_UP_IRQHandler(void)
 {
-	if (TIM_GetIntStatus(TIM8, TIM_INT_UPDATE) != RESET)
-	{
-		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE); // 250us
-		if (Pwr2)									////
+    if (TIM_GetIntStatus(TIM8, TIM_INT_UPDATE) != RESET)
+    {
+        TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
+
+		/* TIM8 uses CH1N/CH2N for the second treatment channel. */
+		if (TreatmentPwmEnableCh2 != 0U)
+		{
+			if (s_treatment_phase_ch2 == 0U)
+			{
+				TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_ENABLE);
+				TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
+				s_treatment_phase_ch2 = 1U;
+			}
+			else
+			{
+				TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
+				TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_ENABLE);
+				s_treatment_phase_ch2 = 0U;
+			}
+		}
+		else
+		{
+			TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
+			TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
+			s_treatment_phase_ch2 = 0U;
+		}
+    }
+}
+
+static void TreatmentChannelB_Update(void)
+{
+	if (Pwr2)
 		{
 			E2_Step++;
 			switch (Wave_SelectB)
@@ -823,7 +987,7 @@ void TIM8_UP_IRQHandler(void)
 				case 0: /*上升段200ms*/
 					if (E2_Step < 400)
 					{
-						Pwr2_ADCValue = (E2_Power * E1_Step) / 400;
+						Pwr2_ADCValue = (E2_Power * E2_Step) / 400;
 					}
 					else
 					{
@@ -880,7 +1044,7 @@ void TIM8_UP_IRQHandler(void)
 					}
 					break;
 				case 1: /*空闲段1000ms*/
-					if (E1_Step < 3600)
+					if (E2_Step < 3600)
 					{
 						Pwr2_ADCValue = 0;
 					}
@@ -913,26 +1077,14 @@ void TIM8_UP_IRQHandler(void)
 			}
 			DAC_SetCh1Data(DAC_ALIGN_R_12BIT, ChB_DACValue);
 
-			Tim8_Count++;
-			if (Tim8_Count == 1)
-			{
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_ENABLE);
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-			}
-			else if (Tim8_Count == 2)
-			{
-				Tim8_Count = 0;
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_ENABLE);
-			}
+			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_ENABLE);
+			TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_ENABLE);
 		}
 		else
 		{
-
-			TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+			TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
 		}
-	}
 }
 
 /**
