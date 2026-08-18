@@ -39,980 +39,89 @@
 #include "log_printf.h"
 #include "SEGGER_RTT.h"
 
-// LCDÊı×ÖÊı×é
+// LCDæ•°å­—æ•°ç»„
 const uint8_t NUM1[] = {0xaf, 0x06, 0x6d, 0x4f, 0xc6, 0xcb, 0xeb, 0x0e, 0xef, 0xcf, 0x00};
 const uint8_t NUM2[] = {0x5f, 0x06, 0x3d, 0x2f, 0x66, 0x6b, 0x7b, 0x0e, 0x7f, 0x6f, 0x00};
 
-uint8_t BEL_SendData[6] = {0};
-uint8_t BEL_SendBeat[13] = {0};
 uint8_t BEL_ReadData[6] = {0};
 
 uint8_t BEL_Flag = 0;
 uint8_t BEL_Beat_Flag = 0;
 uint16_t BEL_Count;
 
-uint8_t AIRIN_Logo = 0x10; /// ³äÆøÍ¼±ê
-uint8_t CH1_Logo = 0x10;   ////1Í¨µÀÍ¼±ê
-uint8_t FORM_Logo = 0x10;  ////Ä£Ê½Í¼±ê
-uint8_t CH2_Logo = 0x10;   ////2Í¨µÀÍ¼±ê
+uint8_t AIRIN_Logo = 0x10; /// å……æ°”å›¾æ ‡
+uint8_t CH1_Logo = 0x10;   ////1é€šé“å›¾æ ‡
+uint8_t FORM_Logo = 0x10;  ////æ¨¡å¼å›¾æ ‡
+uint8_t CH2_Logo = 0x10;   ////2é€šé“å›¾æ ‡
 
-uint8_t PRESS_Logo = 0x80;	/// Ñ¹Á¦ÖµÍ¼±ê
-uint8_t AIROUT_Logo = 0x80; /// ·ÅÆøÍ¼±ê
-uint8_t MMHG_Logo = 0x80;	/// mmHgÍ¼±ê
-uint8_t BLE_Logo = 0x80;	////À¶ÑÀÍ¼±ê
-uint8_t TIM_Logo = 0x80;	/// Ê±¼äÍ¼±ê
+uint8_t PRESS_Logo = 0x80;	/// å‹åŠ›å€¼å›¾ï¿½?
+uint8_t AIROUT_Logo = 0x80; /// æ”¾æ°”å›¾æ ‡
+uint8_t MMHG_Logo = 0x80;	/// mmHgå›¾æ ‡
+uint8_t TIM_Logo = 0x80;	/// æ—¶é—´å›¾æ ‡
 
-uint8_t Bat_Value0 = 0x10; ////µç³ØµçÁ¿Íâ¿òÍ¼±ê
-uint8_t Bat_Value1 = 0x80; ////µç³ØµçÁ¿Ò»¸ñÍ¼±ê
-uint8_t Bat_Value2 = 0x40; ////µç³ØµçÁ¿¶ş¸ñÍ¼±ê
-uint8_t Bat_Value3 = 0x20; ////µç³ØµçÁ¿Èı¸ñÍ¼±ê
+uint8_t Bat_Value0 = 0x10; ////ç”µæ± ç”µé‡å¤–æ¡†å›¾æ ‡
+uint8_t Bat_Value1 = 0x80; ////ç”µæ± ç”µé‡ä¸€æ ¼å›¾ï¿½?
+uint8_t Bat_Value2 = 0x40; ////ç”µæ± ç”µé‡äºŒæ ¼å›¾æ ‡
+uint8_t Bat_Value3 = 0x20; ////ç”µæ± ç”µé‡ä¸‰æ ¼å›¾æ ‡
 
-uint8_t Press_Value1 = 0;	////Ñ¹Á¦¸öÎ»ÊıÍ¼±ê
-uint8_t Press_Value10 = 0;	////Ñ¹Á¦Ê®Î»ÊıÍ¼±ê
-uint8_t Press_Value100 = 0; ////Ñ¹Á¦°ÙÎ»ÊıÍ¼±ê
 
-uint8_t Pwr1_1 = 0;	 ////1Í¨µÀÇ¿¶È¸öÎ»ÊıÍ¼±ê
-uint8_t Pwr1_10 = 0; ////1Í¨µÀÇ¿¶ÈÊ®Î»ÊıÍ¼±ê
 
-uint8_t Pwr2_1 = 0;	 ////2Í¨µÀÇ¿¶È¸öÎ»ÊıÍ¼±ê
-uint8_t Pwr2_10 = 0; ////2Í¨µÀÇ¿¶ÈÊ®Î»ÊıÍ¼±ê
 
 uint16_t TIM2_PrescalerValue = 0;
-uint16_t TIM3_PrescalerValue = 0;
-uint16_t TIM4_PrescalerValue = 0;
 uint16_t TIM5_PrescalerValue = 0;
 
-uint8_t Key_PB_MAIN = 0;
 uint8_t Key_Down_PB_MAIN = 0;
-uint8_t Key_Flag_PB_MAIN = 0;
 uint8_t Key_Up_PB_MAIN = 0;
-uint8_t Key_LongFlag_PB_MAIN = 0;
 uint16_t Key_DownTime_PB_MAIN = 0;
 uint16_t Key_UpTime_PB_MAIN = 0;
 
-uint8_t Key_PB_FUN = 0;
 uint8_t Key_Down_PB_FUN = 0;
-uint8_t Key_Flag_PB_FUN = 0;
 uint8_t Key_Up_PB_FUN = 0;
-uint8_t Key_LongFlag_PB_FUN = 0;
 uint16_t Key_DownTime_PB_FUN = 0;
 uint16_t Key_UpTime_PB_FUN = 0;
 
-uint8_t Key_PB_SS = 0;
 uint8_t Key_Down_PB_SS = 0;
-uint8_t Key_Flag_PB_SS = 0;
 uint8_t Key_Up_PB_SS = 0;
-uint8_t Key_LongFlag_PB_SS = 0;
 uint16_t Key_DownTime_PB_SS = 0;
 uint16_t Key_UpTime_PB_SS = 0;
 
-uint8_t Key_PB_PWRM = 0;
 uint8_t Key_Down_PB_PWRM = 0;
-uint8_t Key_Flag_PB_PWRM = 0;
 uint8_t Key_Up_PB_PWRM = 0;
-uint8_t Key_LongFlag_PB_PWRM = 0;
 uint16_t Key_DownTime_PB_PWRM = 0;
 uint16_t Key_UpTime_PB_PWRM = 0;
 
-uint8_t Key_PB_PWRP = 0;
 uint8_t Key_Down_PB_PWRP = 0;
-uint8_t Key_Flag_PB_PWRP = 0;
 uint8_t Key_Up_PB_PWRP = 0;
-uint8_t Key_LongFlag_PB_PWRP = 0;
 uint16_t Key_DownTime_PB_PWRP = 0;
 uint16_t Key_UpTime_PB_PWRP = 0;
 
-uint8_t Tx2_Data[20];
-
-uint8_t Time_SetFlag = 1;
-uint8_t Set_Minute = 30; ////¿ª»úÄ¬ÈÏ30·ÖÖÓ
-uint8_t Minute = 30;	 ////¿ª»úÄ¬ÈÏ30·ÖÖÓ
+uint8_t Set_Minute = 30; ////å¼€æœºé»˜ï¿½?30åˆ†é’Ÿ
+uint8_t Minute = 30;	 ////å¼€æœºé»˜ï¿½?30åˆ†é’Ÿ
 uint8_t Second = 0;
-uint8_t Pwr_Flag = 0; ////ÉÏµç±êÖ¾Î»
-// uint8_t Start_Flag=0;////Æô¶¯±êÖ¾Î»
-// uint8_t Pause_Flag=0;////Í£Ö¹±êÖ¾Î»
-uint8_t Ch_Flag = 0;  ////Í¨µÀ±êÖ¾Î»0:AÍ¨µÀ£¬1£ºBÍ¨µÀ
-uint8_t WorkType = 0; /////0£ºÖÎÁÆÄ£Ê½£¬1£º¼ì²âÄ£Ê½
-uint8_t Formula = 0;  ////´¦·½0,1,2£¬
+uint8_t Ch_Flag = 0;  ////é€šé“æ ‡å¿—ï¿½?0:Aé€šé“ï¿½?1ï¼šBé€šé“
+uint8_t WorkType = 0; /////0ï¼šæ²»ç–—æ¨¡å¼ï¼Œ1ï¼šæ£€æµ‹æ¨¡ï¿½?
+uint8_t Formula = 0;  ////å¤„æ–¹0,1,2ï¿½?
 uint8_t Ico_Formula = 0;
-uint8_t Pwr1 = 0; /////0-60µµÇ¿¶È
+uint8_t Pwr1 = 0; /////0-60æ¡£å¼ºï¿½?
 uint8_t Pwr2 = 0;
-uint8_t Adc_Flag = 0;
-uint8_t Answer1_Flag = 0;
-uint8_t LowBat_Flag = 0; ////µÍµçÁ¿±êÖ¾Î»
-uint8_t LowBat_Temp = 0;
-uint16_t Press_Value = 0; /// Ñ¹Á¦Öµ
-uint16_t Buzz_cnt = 0;	  /// ·äÃùÆ÷Ê±³¤
-uint16_t Sleep_cnt = 0;	  /// ĞİÃßÊ±³¤
-uint16_t Charg_Count = 0; ////³äµç¼ÆÊı
-uint8_t Flash_Flag = 0;	  ////ÉÁË¸±êÖ¾Î»
-uint8_t Charg_Flag = 0;	  ////³äµçÖĞ±êÖ¾Î»
-uint8_t Chargok_Flag = 1; ////³äÂúµç±êÖ¾Î»
+uint16_t Press_Value = 0; /// å‹åŠ›ï¿½?
+uint16_t Buzz_cnt = 0;	  /// èœ‚é¸£å™¨æ—¶ï¿½?
+uint8_t Flash_Flag = 0;	  ////é—ªçƒæ ‡å¿—ï¿½?
+uint8_t Charg_Flag = 0;	  ////å……ç”µä¸­æ ‡å¿—ä½
+uint8_t Chargok_Flag = 1; ////å……æ»¡ç”µæ ‡å¿—ä½
 
 uint16_t Tim1_Count = 0;
 uint16_t Tim8_Count = 0;
 
-uint8_t Tim_Cnt = 0;
-
 uint8_t Mode_Change = 0;
 
-uint16_t Bl_Cnt = 0; ////±³¹âµãÁÁ¼ÆÊı
+uint16_t Bl_Cnt = 0; ////èƒŒå…‰ç‚¹äº®è®¡æ•°
 
 uint16_t Moto_Count = 0;
 uint16_t MotoFirst_Flag = 1;
 uint16_t MotoRun_Cnt = 0;
 uint16_t MotoStop_Cnt = 0;
-uint16_t Pressure_DAQ = 0;
-uint16_t Pre_Send = 0;
-uint8_t Pressure_Flag = 0;
-uint16_t Ico_Pressure = 0;
 uint8_t Moto_StateFlag = 0;
-uint8_t BLE_Pressure = 0;
-
-extern uint8_t Wave_SelectA;
-extern uint8_t Wave_SelectB;
-
-extern uint16_t E1_Power;
-extern uint16_t E2_Power;
-
-extern uint32_t E1_Step;
-extern uint32_t E2_Step;
-
-extern uint8_t Key_SelectA;
-extern uint8_t Key_SelectB;
-extern uint8_t Time_Flag;
-// uint32_t E1_Length=0;
-// uint16_t Set1_Flag=0;
-// uint16_t Set1_Count=0;
-// uint16_t E1_Period=0;
-// uint16_t E1_Prescaler=0;
-// uint16_t E1_Pulse=0;
-// uint16_t Set1_Threshold=0;
-uint8_t Bat_Value = 0;
-uint16_t i = 0;
-uint16_t Adc_Bat = 0;	 /////µç³ØµçÁ¿ADCÖµ
-uint16_t Adc_Ref = 0;	 /////²Î¿¼µçÑ¹ADCÖµ
-float Adc_Bat_Value = 0; ////Êµ¼Êµç³ØµçÑ¹
-
-uint16_t Pressure_Test = 0;
-uint16_t Start_PressureADC = 160;
-uint8_t MOTORUN = 0;
-
-#define FLASH_PAGE_SIZE ((uint16_t)0x800)
-#define FLASH_WRITE_Freq_ADDR ((uint32_t)0x08010000)
-#define FLASH_SN_Code_ADDR ((uint32_t)0x08011000)
-#define FLASH_Set_Freq_Flag_ADDR ((uint32_t)0x08012000)
-#define FLASH_WRITE_END_ADDR ((uint32_t)0x08018000)
-
-// ±£´æ
-void FLASH_Write(uint32_t Write_Addr, uint32_t Write_Data, uint8_t len)
-{
-	FLASH_Unlock();
-	/* Erase */
-	if (FLASH_COMPL != FLASH_EraseOnePage(Write_Addr))
-	{
-	}
-	/* Program */
-	for (uint32_t Counter_Num = 0; Counter_Num < FLASH_PAGE_SIZE; Counter_Num += len)
-	{
-		if (FLASH_COMPL != FLASH_ProgramWord(Write_Addr + Counter_Num, Write_Data))
-		{
-		}
-	}
-	FLASH_Lock();
-}
-
-// ¶ÁÈ¡
-uint32_t FLASH_Read(uint32_t Read_Addr, uint8_t len)
-{
-	uint32_t Read_Data = 0;
-	/* Check */
-	for (uint32_t Counter_Num = 0; Counter_Num < FLASH_PAGE_SIZE; Counter_Num += 4)
-	{
-		Read_Data = (*(__IO uint32_t *)(Read_Addr + Counter_Num));
-	}
-	return Read_Data;
-}
-
-void DisplayPrg(void)
-{
-	if (Pwr_Flag)
-	{
-		if (WorkType) //////¼ì²âÄ£Ê½
-		{
-			/////ÏÔÊ¾Ñ¹Á¦²âÊÔ½çÃæ
-			//			AIRIN_Logo=0x10;
-			//			AIROUT_Logo=0x80;
-			//			PRESS_Logo=0x80;
-			//			MMHG_Logo=0x80;
-			if (Press_Value < Start_PressureADC)
-			{
-				Press_Value = Start_PressureADC;
-			}
-			BLE_Pressure = (Press_Value - Start_PressureADC) / 10;
-
-			Press_Value1 = ((Press_Value - Start_PressureADC) / 10) % 10;
-			Press_Value10 = ((Press_Value - Start_PressureADC) / 10) / 10 % 10;
-			Press_Value100 = ((Press_Value - Start_PressureADC) / 10) / 100;
-			//////ÏûÒşÖÎÁÆÄ£Ê½½çÃæ
-			CH1_Logo = 0;
-			CH2_Logo = 0;
-			FORM_Logo = 0;
-			Pwr1_1 = 10;
-			Pwr1_10 = 10;
-			Pwr2_1 = 10;
-			Pwr2_10 = 10;
-			//			Ico_Formula=9;
-			//			write_LCD(1,4, NUM1[10]|FORM_Logo);
-		}
-		else //////ÖÎÁÆÄ£Ê½
-		{
-			/////ÏÔÊ¾Ñ¹Á¦²âÊÔ½çÃæ
-			AIRIN_Logo = 0;
-			AIROUT_Logo = 0;
-			PRESS_Logo = 0;
-			MMHG_Logo = 0;
-			Press_Value1 = 10;
-			Press_Value10 = 10;
-			Press_Value100 = 10;
-			//////ÏûÒşÖÎÁÆÄ£Ê½½çÃæ
-			//			CH1_Logo=0x10;
-			//			CH2_Logo=0x10;
-
-			Pwr1_1 = Pwr1 % 10;
-			Pwr1_10 = Pwr1 / 10;
-			Pwr2_1 = Pwr2 % 10;
-			Pwr2_10 = Pwr2 / 10;
-		}
-		write_LCD(1, 0, NUM1[Pwr1_10] | AIRIN_Logo);
-		write_LCD(1, 2, NUM1[Pwr1_1] | CH1_Logo);
-		write_LCD(1, 4, NUM1[Ico_Formula + 1] | FORM_Logo);
-		write_LCD(1, 6, NUM1[Pwr2_10]);
-		write_LCD(1, 8, NUM1[Pwr2_1] | CH2_Logo);
-		write_LCD(1, 10, NUM2[Press_Value100] | PRESS_Logo);
-		write_LCD(1, 12, NUM2[Press_Value10] | AIROUT_Logo);
-		write_LCD(1, 14, NUM2[Press_Value1] | MMHG_Logo);
-		write_LCD(1, 16, NUM2[Minute / 10] | BLE_Logo);
-		write_LCD(1, 18, NUM2[Minute % 10] | TIM_Logo);
-		write_LCD(1, 20, (Bat_Value0 | Bat_Value1 | Bat_Value2 | Bat_Value3));
-	}
-	else if (Charg_Flag || Chargok_Flag) ////³äµçÖĞ»ò³äÂúµçÏÔÊ¾ÄÚÈİ
-	{
-		write_LCD(1, 0, 0);
-		write_LCD(1, 2, 0);
-		write_LCD(1, 4, 0);
-		write_LCD(1, 6, 0);
-		write_LCD(1, 8, 0);
-		write_LCD(1, 10, 0);
-		write_LCD(1, 12, 0);
-		write_LCD(1, 14, 0);
-		write_LCD(1, 16, 0);
-		write_LCD(1, 18, 0);
-		write_LCD(1, 20, (Bat_Value0 | Bat_Value1 | Bat_Value2 | Bat_Value3));
-	}
-}
-/// °´¼ü
-void KeyScan(void)
-{
-	if (Bit_SET == READ_PB_MAIN) ////µçÔ´
-	{
-		if (Key_Down_PB_MAIN == 0)
-		{
-			Key_Up_PB_MAIN = 0;
-			Key_Down_PB_MAIN = 1;
-			Key_DownTime_PB_MAIN = 0;
-			Key_Flag_PB_MAIN = 0;
-			Key_LongFlag_PB_MAIN = 0;
-			//				Key_PB_MAIN=1;
-		}
-		else
-		{
-			if (Key_DownTime_PB_MAIN > 2000 && Key_LongFlag_PB_MAIN == 0) ////³¤°´2S
-			{
-				Key_LongFlag_PB_MAIN = 1;
-				Key_PB_MAIN = 1;
-			}
-			if (Key_DownTime_PB_MAIN > 30 && Key_Flag_PB_MAIN == 0) /// ¶Ì°´30MS
-			{
-				Key_Flag_PB_MAIN = 1;
-				//				Key_PB_MAIN=1;
-			}
-		}
-	}
-	else
-	{
-		if (Key_Up_PB_MAIN == 0)
-		{
-			Key_Up_PB_MAIN = 1;
-			Key_UpTime_PB_MAIN = 0;
-		}
-		else
-		{
-			if (Key_UpTime_PB_MAIN > 30) // ËÉ¿ªÊ±¼ä´óÓÚ30MS
-			{
-				Key_Down_PB_MAIN = 0;
-				if (Key_Flag_PB_MAIN && Key_LongFlag_PB_MAIN == 0)
-				{
-					Key_Flag_PB_MAIN = 0;
-					Key_PB_MAIN = 1;
-				}
-			}
-		}
-	}
-	if (Bit_SET == READ_PB_FUN) ////¹¦ÄÜ
-	{
-		if (Key_Down_PB_FUN == 0)
-		{
-			Key_Up_PB_FUN = 0;
-			Key_Down_PB_FUN = 1;
-			Key_DownTime_PB_FUN = 0;
-			Key_Flag_PB_FUN = 0;
-			Key_LongFlag_PB_FUN = 0;
-			//				Key_PB_FUN=1;
-		}
-		else
-		{
-			if (Key_DownTime_PB_FUN > 30 && Key_Flag_PB_FUN == 0) ////¶Ì°´
-			{
-				Key_Flag_PB_FUN = 1;
-				Key_PB_FUN = 1;
-			}
-		}
-	}
-	else
-	{
-		if (Key_Up_PB_FUN == 0)
-		{
-			Key_Up_PB_FUN = 1;
-			Key_UpTime_PB_FUN = 0;
-		}
-		else
-		{
-			if (Key_UpTime_PB_FUN > 30) // ËÉ¿ªÊ±¼ä´óÓÚ30MS
-			{
-				Key_Down_PB_FUN = 0;
-			}
-		}
-	}
-	if (Bit_SET == READ_PB_PWRM) ////¼õ
-	{
-		if (Key_Down_PB_PWRM == 0)
-		{
-			Key_Up_PB_PWRM = 0;
-			Key_Down_PB_PWRM = 1;
-			Key_DownTime_PB_PWRM = 0;
-			Key_Flag_PB_PWRM = 0;
-			Key_LongFlag_PB_PWRM = 0;
-			//				Key_PB_PWRM=1;
-		}
-		else
-		{
-			if (Key_DownTime_PB_PWRM > 30 && Key_Flag_PB_PWRM == 0) ////¶Ì°´
-			{
-				Key_Flag_PB_PWRM = 1;
-				Key_PB_PWRM = 1;
-			}
-		}
-	}
-	else
-	{
-		if (Key_Up_PB_PWRM == 0)
-		{
-			Key_Up_PB_PWRM = 1;
-			Key_UpTime_PB_PWRM = 0;
-		}
-		else
-		{
-			if (Key_UpTime_PB_PWRM > 30) // ËÉ¿ªÊ±¼ä´óÓÚ30MS
-			{
-				Key_Down_PB_PWRM = 0;
-			}
-		}
-	}
-	if (Bit_SET == READ_PB_PWRP) ////¼Ó
-	{
-		if (Key_Down_PB_PWRP == 0)
-		{
-			Key_Up_PB_PWRP = 0;
-			Key_Down_PB_PWRP = 1;
-			Key_DownTime_PB_PWRP = 0;
-			Key_Flag_PB_PWRP = 0;
-			Key_LongFlag_PB_PWRP = 0;
-			//				Key_PB_PWRP=1;
-		}
-		else
-		{
-			if (Key_DownTime_PB_PWRP > 30 && Key_Flag_PB_PWRP == 0) ////¶Ì°´
-			{
-				Key_Flag_PB_PWRP = 1;
-				Key_PB_PWRP = 1;
-			}
-		}
-	}
-	else
-	{
-		if (Key_Up_PB_PWRP == 0)
-		{
-			Key_Up_PB_PWRP = 1;
-			Key_UpTime_PB_PWRP = 0;
-		}
-		else
-		{
-			if (Key_UpTime_PB_PWRP > 30) // ËÉ¿ªÊ±¼ä´óÓÚ30MS
-			{
-				Key_Down_PB_PWRP = 0;
-			}
-		}
-	}
-	if (Bit_SET == READ_PB_SS) ////ÆôÍ£
-	{
-		if (Key_Down_PB_SS == 0)
-		{
-			Key_Up_PB_SS = 0;
-			Key_Down_PB_SS = 1;
-			Key_DownTime_PB_SS = 0;
-			Key_Flag_PB_SS = 0;
-			Key_LongFlag_PB_SS = 0;
-			//				Key_PB_SS=1;
-		}
-		else
-		{
-			if (Key_DownTime_PB_SS > 2000 && Key_LongFlag_PB_SS == 0) ////³¤°´2S
-			{
-				Key_LongFlag_PB_SS = 1;
-				Key_PB_SS = 1;
-			}
-			if (Key_DownTime_PB_SS > 30 && Key_Flag_PB_SS == 0) ////¶Ì°´
-			{
-				Key_Flag_PB_SS = 1;
-				//				Key_PB_SS=1;
-			}
-		}
-	}
-	else
-	{
-		if (Key_Up_PB_SS == 0)
-		{
-			Key_Up_PB_SS = 1;
-			Key_UpTime_PB_SS = 0;
-		}
-		else
-		{
-			if (Key_UpTime_PB_SS > 30) // ËÉ¿ªÊ±¼ä´óÓÚ30MS
-			{
-				Key_Down_PB_SS = 0;
-				if (Key_Flag_PB_SS && Key_LongFlag_PB_SS == 0)
-				{
-					Key_Flag_PB_SS = 0;
-					Key_PB_SS = 1;
-				}
-			}
-		}
-	}
-}
-
-void KeyEvent(void)
-{
-	if (Key_PB_MAIN && Key_LongFlag_PB_MAIN) ////³¤°´µçÔ´°´¼ü¹Ø»ú
-	{
-		Key_PB_MAIN = 0;
-		if (Pwr_Flag)
-		{
-			Pwr_Flag = 0;
-
-			//			Buzz_cnt=500;
-			//			Sleep_cnt=0;
-			//			BLEN_OFF;////¹Ø±Õ±³¹â
-			//			HOTEN1_OFF;////¹Ø±Õ¼ÓÈÈ
-			//			HOTEN2_OFF;
-			//			VEN_OFF;////¹Ø±ÕÉıÑ¹
-			//			BATEN_OFF;////¹Ø±Õµç³Ø¼ì²â
-			//			Set_Minute1=30;
-			//			Set_Minute2=30;
-			//			Minute1=30;
-			//			Second1=0;
-			//			Minute2=30;
-			//			Second2=0;
-			//			Pwr1=0;
-			//			Pwr2=0;
-			//			Alarm1_Flag=0;
-			//			Alarm2_Flag=0;
-			//			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-			//			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-			//			TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
-			//			TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
-			//			DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0);
-			//			DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0);
-		}
-	}
-	else if (Key_PB_MAIN) ////¶Ì°´µçÔ´°´¼üÇĞ»»Ê±¼ä
-	{
-		Key_PB_MAIN = 0;
-		if (Pwr_Flag)
-		{
-			Buzz_cnt = 30; /// °´¼üÒô
-			Sleep_cnt = 0; /// ÇåÁãĞİÃß¼ÆÊı
-			Bl_Cnt = 60;   //////±³¹âµãÁÁ
-			Time_Flag = 1;
-			if (Set_Minute == 30) /// 30·ÖÖÓ¾ÍÌøµ½10·ÖÖÓ
-				Set_Minute = 10;
-			else if (Set_Minute % 10 == 0) /// 10·ÖÖÓ»ò20·ÖÖÓ¾Í¼Ó10·ÖÖÓ
-				Set_Minute = Set_Minute + 10;
-			else ////·ñÔò¼ÓÎªÕû10·ÖÖÓ
-				Set_Minute = Set_Minute / 10 + 10;
-			Minute = Set_Minute;
-			Second = 0;
-		}
-	}
-	if (Key_LongFlag_PB_SS && Key_PB_SS) ////³¤°´ÆôÍ£¼ü
-	{
-		Key_PB_SS = 0;
-		if (Pwr_Flag)
-		{
-			Buzz_cnt = 30; /// °´¼üÒô
-			Sleep_cnt = 0; /// ÇåÁãĞİÃß¼Æ
-			Bl_Cnt = 60;   ////±³¹âµãÁÁ
-			if (WorkType)  /////¼ì²âÄ£Ê½
-			{
-
-				SWEN_ON;			/// ¿ªÆôµç´Å·§
-				MotoFirst_Flag = 1; // ÖØÖÃ³õ´Î³äÆø±êÖ¾Î»
-				Key_SelectA = 2;
-				MotoStop_Cnt = 2000; // µç´Å·§¿ªÆô2S
-			}
-			else /////ÖÎÁÆÄ£Ê½
-			{
-				Ch_Flag = !Ch_Flag; ////Í¨µÀÇĞ»»
-			}
-		}
-	}
-	else if (Key_PB_SS) ////¶Ì°´ÆôÍ£¼ü
-	{
-		Key_PB_SS = 0;
-		Time_Flag = 0;
-		if (Pwr_Flag)
-		{
-			Buzz_cnt = 30; /// °´¼üÒô
-			Sleep_cnt = 0; /// ÇåÁãĞİÃß¼Æ
-			Bl_Cnt = 60;   ////±³¹âµãÁÁ
-			if (WorkType)  /////¼ì²âÄ£Ê½
-			{
-				Time_SetFlag = 0;
-				Key_SelectA = 1;
-				SWEN_OFF;		 /////¹Ø±Õµç´Å·§
-				MotoRun_Cnt = 1; // Æô¶¯Âí´ï
-			}
-			else /////ÖÎÁÆÄ£Ê½
-			{
-				if (Formula == 2) ////³ı·ÇÇĞ»»
-				{
-					Formula = 0;
-				}
-				else
-				{
-					Formula++;
-				}
-				Pwr1 = 0;
-				Pwr2 = 0;
-				Wave_SelectA = Formula;
-				Wave_SelectB = Formula;
-			}
-		}
-	}
-	if (Key_PB_FUN) ////¶Ì°´¹¦ÄÜ¼ü
-	{
-		Key_PB_FUN = 0;
-		Time_Flag = 0;
-		if (Pwr_Flag)
-		{
-			Buzz_cnt = 30; /// °´¼üÒô
-			Sleep_cnt = 0; /// ÇåÁãĞİÃß¼Æ
-			Bl_Cnt = 60;   ////±³¹âµãÁÁ
-			if ((Pwr1 == 0) && (Pwr2 == 0) && (Mode_Change == 0))
-			{
-				WorkType = !WorkType;
-			}
-		}
-	}
-	if (Key_PB_PWRP) ////¼Ó
-	{
-		Key_PB_PWRP = 0;
-		Time_Flag = 0;
-		if (Pwr_Flag)
-		{
-			Buzz_cnt = 30; /// °´¼üÒô
-			Sleep_cnt = 0; /// ÇåÁãĞİÃß¼Æ
-			Bl_Cnt = 60;   ////±³¹âµãÁÁ
-			if (WorkType == 0)
-			{
-				Time_SetFlag = 0;
-				if (Ch_Flag) ////Í¨µÀ2
-				{
-					if (Pwr2 == 60) ////Ç¿¶È×î´ó60µµ
-						Pwr2 = 60;
-					else
-						Pwr2++;
-				}
-				else ////Í¨µÀ1
-				{
-					if (Pwr1 == 60)
-						Pwr1 = 60;
-					else
-						Pwr1++;
-				}
-			}
-		}
-	}
-	if (Key_PB_PWRM) ////¼õ
-	{
-		Key_PB_PWRM = 0;
-		Time_Flag = 0;
-		if (Pwr_Flag)
-		{
-			Buzz_cnt = 30; /// °´¼üÒô
-			Sleep_cnt = 0; /// ÇåÁãĞİÃß¼Æ
-			Bl_Cnt = 60;   ////±³¹âµãÁÁ
-			if (WorkType == 0)
-			{
-				if (Ch_Flag) ////Í¨µÀ2
-				{
-					if (Pwr2 == 0) ////Ç¿¶È×îĞ¡0µµ
-					{
-						Pwr2 = 0;
-					}
-					else
-						Pwr2--;
-				}
-				else ////Í¨µÀ1
-				{
-					if (Pwr1 == 0)
-						Pwr1 = 0;
-					else
-						Pwr1--;
-				}
-			}
-		}
-	}
-}
-/// ´®¿Ú·¢ËÍÊı¾İ
-void SendPrg(void)
-{
-	if (Answer1_Flag)
-	{
-		for (i = 0; i < (Tx2_Data[2] + 5); i++) ////Êı¾İ³¤¶È+5£¬Í·Á½Î»£¬CMDÒ»Î»£¬Êı¾İ³¤¶ÈÒ»Î»£¬Ğ£ÑéÒ»Î»£¬
-		{
-			USART_SendData(USART2, Tx2_Data[i]); // ·¢ËÍÊı¾İ
-			while (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) == RESET)
-				;
-		}
-		Answer1_Flag = 0;
-	}
-}
-
-/**
- * @brief   Main program
- */
-int mainold(void)
-{
-	RCC_Configuration();
-	GPIO_Configuration();
-	TIM5_Configuration();	////¶¨Ê±Æ÷
-	USART2_Configuration(); ////´®¿Ú
-	NVIC_Configuration();	////ÖĞ¶Ï
-	Delay1ms(100);
-	if (Bit_SET == READ_PB_MAIN)
-	{
-		Delay1ms(1000);
-		if (Bit_SET == READ_PB_MAIN) /////³¤°´Ö÷°´¼ü
-		{
-			Pwr_Flag = 1;			////ÉÏµç±êÖ¾
-			USART2_Configuration(); ////ÉÏÎ»»ú½Ó¿Ú
-									//				TIM2_Configuration();////DAC
-			VEN_ON;					////¿ªÆôÑ¹Á¦´«¸ĞÆ÷µçÔ´
-			TIM4_Configuration();	////MOTO
-			TIM1_Configuration();	////µç´Ì¼¤
-			TIM2_Configuration();
-			TIM6_Configuration();
-			TIM8_Configuration();
-			DAC_ChannelConfig();
-			TIM_Enable(TIM6, ENABLE); ////Æô¶¯DACÊ±ÖÓ
-			BLEEN_ON;
-
-			Delay1ms(10);
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE); /// ¹Ø±ÕÍ¨µÀÊä³ö
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
-			TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
-			ADC_Initial(ADC1); /// ³õÊ¼»¯ADC¼ì²â
-			ADC_Initial(ADC2); /// ³õÊ¼»¯ADC¼ì²â
-			BATEN_ON;		   /// Ê¹ÄÜµçÁ¿¼ì²â
-			Delay1ms(100);
-
-			SWEN_OFF;	   ////¹Ø±Õµç´Å·§
-			Bl_Cnt = 60;   ////±³¹âµãÁÁ
-			TM1621C_CS_ON; ////Ô¤ÉèµçÆ½
-			TM1621C_CLK_ON;
-			TM1621C_DATA_ON;
-			Delay1ms(100);
-			LCD_init(); /// ÆÁÄ»³õÊ¼»¯
-			Delay1ms(100);
-			Allon_LCD();		  /// µãÁÁÆÁÄ»
-			TIM3_Configuration(); ////BUZZ
-			Delay1ms(50);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////¹Ø±Õ·äÃùÆ÷
-			Delay1ms(50);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_ENABLE); ////¿ªÆô·äÃùÆ÷
-			Delay1ms(50);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////¹Ø±Õ·äÃùÆ÷
-			Delay1ms(50);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_ENABLE); ////¿ªÆô·äÃùÆ÷
-			Delay1ms(50);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////¹Ø±Õ·äÃùÆ÷
-			Delay1ms(100);
-			Tx2_Data[0] = 0xaa; /// Ò»Î»Êı¾İ
-			Tx2_Data[1] = 0x55; /// ±íÊ¾·¢ËÍµÄÊÇÍ¨Ñ¶ÎÕÊÖ
-			Delay1ms(200);
-			Alloff_LCD(); /// ÆÁÄ»Ï¨Ãğ
-			AdcPrg();	  ////Ã¿´Î¿ª»ú¼ì²âÒ»´Îµç³ØµçÁ¿
-			Delay1ms(300);
-
-			//				Delay1ms(1000);
-			//				Start_PressureADC=ADC_GetData(ADC1,ADC1_Channel_11_PA2);////»ñµÃÑ¹Á¦µÄADCÖµ
-		}
-	}
-	while (1)
-	{
-		KeyScan();
-		KeyEvent();
-		DisplayPrg();
-		ChargPrg(); ////³äµç×´Ì¬¿ÉÄÜ»á¹Ø±Õ²¢¸´Î»ADC
-		//			SendPrg();
-		//			if((Pwr1==0)&&(Pwr2==0))
-		//				VEN_OFF;
-		//			else
-		//				VEN_ON;
-		//			AdcPrg();
-		if (Pwr_Flag)
-		{
-			Pressure_Test = ADC_GetData(ADC1, ADC1_Channel_11_PA2); // ²âÊÔÓï¾ä
-			Pressure_DAQ = 0;										// Çå¿ÕÉÏÒ»×éÊı¾İ
-			for (uint8_t i = 0; i < 8; i++)							// ¼òÒ×ÂË²¨Ëã·¨£ºÈ¡¾ùÖµ
-			{
-				Pressure_DAQ = Pressure_DAQ + ADC_GetData(ADC1, ADC1_Channel_11_PA2); ////»ñµÃÑ¹Á¦µÄADCÖµ
-			}
-			Press_Value = Pressure_DAQ / 8;
-			if (Pre_Send < Press_Value)
-			{
-				Pre_Send = Press_Value;
-			}
-			if (Press_Value > 1360) // ÆøÑ¹ÉÏÏŞÎª120mmHg,×ª»»ÎªAD¶ÁÊıÎª2000£»
-			{
-				MotoStop_Cnt = 2000; // µç´Å·§¿ªÆôÁ½Ãë·ÅÆø
-			}
-		}
-
-		if (BEL_Beat_Flag)
-		{
-			Send_BeatPack();
-			BEL_Beat_Flag = 0;
-		}
-		if (BEL_Flag)
-		{
-			App_Event(BEL_ReadData[3], BEL_ReadData[4]);
-			BEL_Flag = 0;
-		}
-	}
-}
-/// ³äµç×´Ì¬µÆ¼°µçÁ¿¿ØÖÆ
-void ChargPrg(void)
-{
-	if (Bit_RESET == READ_STDBY) /// Èç¹û³äÂúµç
-	{
-		if (Pwr_Flag) /// ³äµçÖĞÒªÍ£Ö¹¹¤×÷
-		{
-			Pwr_Flag = 0;
-			Pwr1 = 0;
-			Pwr2 = 0;
-			Bl_Cnt = 60;		  ////±³¹âµãÁÁ
-			TIM_SetCmp1(TIM1, 0); /// µç´Ì¼¤Âö¿íÇåÁã
-			TIM_SetCmp2(TIM1, 0);
-			TIM_SetCmp4(TIM3, 0);									 ////·äÃùÆ÷Âö¿íÇåÁã
-			TIM_SetCmp4(TIM4, 0);									 ////MOTOÇåÁã
-																	 //			TIM_SetCmp1(TIM2,0);////DAC2ÇåÁã
-																	 //			TIM_SetCmp2(TIM2,0);////DAC1ÇåÁã
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE); /// ¹Ø±ÕÍ¨µÀÊä³ö
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
-			TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////¹Ø±Õ·äÃùÆ÷
-			TIM_DeInit(TIM1);										 ////ÖØÖÃµç´Ì¼¤¶¨Ê±Æ÷
-			TIM_DeInit(TIM2);										 ////ÖØÖÃDAC¶¨Ê±Æ÷
-			TIM_DeInit(TIM3);										 ////ÖØÖÃ·äÃùÆ÷¶¨Ê±Æ÷
-			TIM_DeInit(TIM4);										 ////ÖØÖÃMOTO¶¨Ê±Æ÷
-			VEN_OFF;												 /// ¹Ø±Õµç´Ì¼¤µçÔ´
-			SWEN_OFF;												 /// ¹Ø±Õµç´Å·§
-			ADC_DeInit(ADC1);										 /// ÖØÖÃADC1
-			ADC_DeInit(ADC2);										 /// ÖØÖÃADC2
-			BATEN_OFF;												 ////¹Ø±ÕµçÁ¿¼ì²âÊ¹ÄÜ
-		}
-		Charg_Flag = 0;
-		Chargok_Flag = 1;
-	}
-	else if (Bit_RESET == READ_CHARG) /// Èç¹û³äµçÖĞ
-	{
-		if (Pwr_Flag) /// ³äµçÖĞÒªÍ£Ö¹¹¤×÷
-		{
-			Pwr_Flag = 0;
-			Pwr1 = 0;
-			Pwr2 = 0;
-			Bl_Cnt = 60;		  ////±³¹âµãÁÁ
-			TIM_SetCmp1(TIM1, 0); /// µç´Ì¼¤Âö¿íÇåÁã
-			TIM_SetCmp2(TIM1, 0);
-			TIM_SetCmp4(TIM3, 0);									 ////·äÃùÆ÷Âö¿íÇåÁã
-			TIM_SetCmp4(TIM4, 0);									 ////MOTOÇåÁã
-			TIM_SetCmp1(TIM2, 0);									 ////DAC2ÇåÁã
-			TIM_SetCmp2(TIM2, 0);									 ////DAC1ÇåÁã
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE); /// ¹Ø±ÕÍ¨µÀÊä³ö
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
-			TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
-			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////¹Ø±Õ·äÃùÆ÷
-			TIM_DeInit(TIM1);										 ////ÖØÖÃµç´Ì¼¤¶¨Ê±Æ÷
-			TIM_DeInit(TIM2);										 ////ÖØÖÃDAC¶¨Ê±Æ÷
-			TIM_DeInit(TIM3);										 ////ÖØÖÃ·äÃùÆ÷¶¨Ê±Æ÷
-			TIM_DeInit(TIM4);										 ////ÖØÖÃMOTO¶¨Ê±Æ÷
-			VEN_OFF;												 /// ¹Ø±Õµç´Ì¼¤µçÔ´
-			SWEN_OFF;												 /// ¹Ø±Õµç´Å·§
-			ADC_DeInit(ADC1);										 /// ÖØÖÃADC1
-			ADC_DeInit(ADC2);										 /// ÖØÖÃADC2
-			BATEN_OFF;												 ////¹Ø±ÕµçÁ¿¼ì²âÊ¹ÄÜ
-		}
-		Charg_Flag = 1;
-		Chargok_Flag = 0;
-	}
-	else
-	{
-		Charg_Flag = 0;
-		Chargok_Flag = 0;
-		if (Pwr_Flag == 0) ////Èç¹ûµ±Ç°×´Ì¬Ê±ĞİÃß¾Í½øÈëĞİÃß
-		{
-			Charg_Count++; /// ·ÀÖ¹³äµçÖĞºÍ³äÂúµç±êÖ¾½ÅÇĞ»»¹ı³ÌÖĞÓĞÊ±Ï¶£¬Ôì³ÉÖ±½Ó½øÈëĞİÃß×´Ì¬¶øÔì³É³äÂúµçÂÌµÆ²»ÁÁ
-			Delay1ms(10);
-			if (Charg_Count >= 100)
-			{
-				Charg_Count = 0;
-				if ((Bit_SET == READ_STDBY) && (Bit_SET == READ_CHARG)) /// Î´³äµç×´Ì¬ÏÂ¾Í½øÈëĞİÃß
-				{
-					/// ¹Ø±ÕADCÄ£¿é¼°ÖĞ¶Ï
-
-					Delay1ms(100);
-					Pwr1 = 0;
-					Pwr2 = 0;
-					Pwr_Flag = 0;
-					Bl_Cnt = 0;
-
-					TIM_SetCmp1(TIM1, 0); /// µç´Ì¼¤Âö¿íÇåÁã
-					TIM_SetCmp2(TIM1, 0);
-					TIM_SetCmp4(TIM4, 0);									 ////·äÃùÆ÷Âö¿íÇåÁã
-					TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE); /// ¹Ø±ÕÍ¨µÀÊä³ö
-					TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
-					TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
-					TIM_EnableCapCmpChN(TIM1, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
-					TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////¹Ø±Õ·äÃùÆ÷
-					TIM_DeInit(TIM1);										 ////ÖØÖÃµç´Ì¼¤¶¨Ê±Æ÷
-					TIM_DeInit(TIM4);										 ////ÖØÖÃ·äÃùÆ÷¶¨Ê±Æ÷
-					VEN_OFF;												 /// ¹Ø±Õµç´Ì¼¤µçÔ´
-					SWEN_OFF;												 /// ¹Ø±Õµç´Å·§
-					ADC_DeInit(ADC1);										 /// ÖØÖÃADC1
-					BATEN_OFF;												 ////¹Ø±ÕµçÁ¿¼ì²âÊ¹ÄÜ
-
-					TIM_DeInit(TIM5); ////ÖØÖÃTIM5
-					BLEN_OFF;
-					Alloff_LCD(); /// ÆÁÄ»Ï¨Ãğ
-
-					PBExtiInit();	 /// Ê¹ÄÜ°´¼üÖĞ¶Ï
-					ChargExtiInit(); ////Ê¹ÄÜ³äµçÖĞ¶Ï
-
-					//						Charg_Count=0;
-					EXTI_ClrITPendBit(EXTI_LINE10); /// Çå³ıCHARG»½ĞÑÖĞ¶Ï
-					EXTI_ClrITPendBit(EXTI_LINE15); /// Çå³ıPB»½ĞÑÖĞ¶Ï
-					PWR_BackupAccessEnable(ENABLE);
-					RCC_EnableBackupReset(DISABLE);
-					Delay1ms(100);
-					PWR_EnterSTOP2Mode(PWR_STOPENTRY_WFI); ////ĞİÃß
-					NVIC_SystemReset();					   /// ÖØÆô
-				}
-			}
-		}
-		else if (Adc_Flag && Pwr_Flag)
-		{
-			AdcPrg();
-			Adc_Flag = 0;
-			if (LowBat_Flag) /// Èç¹ûµç³Ø¿÷µç£¬¾Í½øÈëĞİÃß
-			{
-				if (LowBat_Temp != LowBat_Flag)
-				{
-					LowBat_Temp = LowBat_Flag;
-					if (LowBat_Temp)
-						Pwr_Flag = 0;
-				}
-			}
-		}
-	}
-}
-void AdcPrg(void)
-{
-	//	Press_Value=ADC_GetData(ADC1,ADC1_Channel_11_PA2);////»ñµÃÑ¹Á¦µÄADCÖµ
-	Adc_Bat = ADC_GetData(ADC1, ADC1_Channel_04_PA3); ////»ñµÃµç³ØADCÖµ
-	Adc_Ref = ADC_GetData(ADC1, ADC1_Channel_03_PA6); ////»ñµÃ²Î¿¼µçÑ¹2.5VµÄADCÖµ
-	if (Adc_Ref == 0U)
-	{
-		return;
-	}
-	Adc_Bat_Value = Adc_Bat * 2.5f * 2 / Adc_Ref;
-	if (Adc_Bat_Value > 4.2f) /// Âúµç4.2V£¬µçÁ¿Í¼±êÏÔÊ¾Âú¸ñ
-	{
-		LowBat_Flag = 0;
-		Bat_Value0 = 0x10;
-		Bat_Value1 = 0x80;
-		Bat_Value2 = 0x40;
-		Bat_Value3 = 0x20;
-	}
-	else if (Adc_Bat_Value > 3.9f) ////3.7VµçÁ¿ÏÔÊ¾Á½¸ñ
-	{
-		LowBat_Flag = 0;
-		Bat_Value0 = 0x10;
-		Bat_Value1 = 0x80;
-		Bat_Value2 = 0x40;
-		Bat_Value3 = 0;
-	}
-	else if (Adc_Bat_Value > 3.7f) ////3.6VµçÁ¿ÏÔÊ¾Ò»¸ñ
-	{
-		LowBat_Flag = 0;
-		Bat_Value0 = 0x10;
-		Bat_Value1 = 0x80;
-		Bat_Value2 = 0;
-		Bat_Value3 = 0;
-	}
-	else if (Adc_Bat_Value > 3.5f) ////µçÁ¿ÏÔÊ¾Íâ¿ò
-	{
-		Bat_Value0 = 0x10;
-		Bat_Value1 = 0;
-		Bat_Value2 = 0;
-		Bat_Value3 = 0;
-		LowBat_Flag = 0;
-	}
-	//	else///µç³ØµçÁ¿µÍÓÚ3.5V
-	//	{
-	//		LowBat_Flag=1;
-	//	}
-
-	Bat_Value = (Adc_Bat_Value - 3.5) * 1000 / 7;
-	if (Bat_Value > 100)
-	{
-		Bat_Value = 100;
-	}
-}
 
 #ifdef USE_FULL_ASSERT
 
@@ -1035,42 +144,26 @@ void assert_failed(const uint8_t *expr, const uint8_t *file, uint32_t line)
 
 #endif
 
-/**
- * @}
- */
-
-/**
- * @}
- */
-
-// ÖØĞ´
-
 /*============================================================================
- * ĞÂÖ÷³ÌĞò¿ò¼Ü
+ * æ–°ä¸»ç¨‹åºæ¡†æ¶
  *
- * Éè¼ÆÔ­Ôò£º
- * 1. ÖĞ¶ÏÖ»Ìá¹©ÏµÍ³½ÚÅÄ»òÍê³É¸ßÊµÊ±ĞÔµÄ²¨ĞÎÊä³ö£¬²»ÔÚÖĞ¶ÏÀï´¦Àí UI ÒµÎñ¡£
- * 2. °´¼üºÍÀ¶ÑÀÃüÁîÍ³Ò»×ª»»ÎªÊÂ¼ş£¬ÔÙÓÉ×´Ì¬»ú¾ö¶¨ÄÜ·ñÖ´ĞĞ¡£
- * 3. ADC¡¢LCD¡¢³äµç¼ì²âµÈÈÎÎñ°´¹Ì¶¨ÖÜÆÚÔËĞĞ£¬½ûÖ¹ÔÚÖ÷Ñ­»·ÖĞÎŞÏŞ×èÈû¡£
- * 4. ËùÓĞ×´Ì¬ÇĞ»»¶¼Í¨¹ı App_RequestState()£¬±ãÓÚ¼¯ÖĞÖ´ĞĞ½øÈë/ÍË³ö¶¯×÷¡£
+ * è®¾è®¡åŸåˆ™ï¿½?
+ * 1. ä¸­æ–­åªæä¾›ç³»ç»ŸèŠ‚æ‹æˆ–å®Œæˆé«˜å®æ—¶æ€§çš„æ³¢å½¢è¾“å‡ºï¼Œä¸åœ¨ä¸­æ–­é‡Œå¤„ç† UI ä¸šåŠ¡ï¿½?
+ * 2. æŒ‰é”®å’Œè“ç‰™å‘½ä»¤ç»Ÿä¸€è½¬æ¢ä¸ºäº‹ä»¶ï¼Œå†ç”±çŠ¶æ€æœºå†³å®šèƒ½å¦æ‰§è¡Œï¿½?
+ * 3. ADCã€LCDã€å……ç”µæ£€æµ‹ç­‰ä»»åŠ¡æŒ‰å›ºå®šå‘¨æœŸè¿è¡Œï¼Œç¦æ­¢åœ¨ä¸»å¾ªç¯ä¸­æ— é™é˜»å¡ï¿½?
+ * 4. æ‰€æœ‰çŠ¶æ€åˆ‡æ¢éƒ½é€šè¿‡ App_RequestState()ï¼Œä¾¿äºé›†ä¸­æ‰§è¡Œè¿›ï¿½?/é€€å‡ºåŠ¨ä½œï¿½?
  *============================================================================*/
 
 typedef enum
 {
-	APP_STATE_POWER_OFF = 0, /* ¹Ø»úµÈ´ı£ºÖ»±£Áô°´¼üºÍ³äµç¼ì²â */
-	APP_STATE_BOOTING,       /* ¿ª»ú³õÊ¼»¯£º°´Ë³ĞòÆô¶¯¹¤×÷ÍâÉè */
-	APP_STATE_READY,         /* ÒÑ¿ª»úµ«ÉĞÎ´Êä³ö */
-	APP_STATE_THERAPY,       /* ÖÎÁÆÄ£Ê½ */
-	APP_STATE_PRESSURE,      /* Ñ¹Á¦¼ì²â/³ä·ÅÆøÄ£Ê½ */
-	APP_STATE_CHARGING, /* Powered-off charging display; work may continue while charging. */
-	APP_STATE_FAULT          /* ¹ÊÕÏÄ£Ê½£ºÁ¢¼´¹Ø±ÕËùÓĞÎ£ÏÕÊä³ö */
+	APP_STATE_POWER_OFF = 0, /* å…³æœºç­‰å¾…ï¼šåªä¿ç•™æŒ‰é”®å’Œå……ç”µæ£€ï¿½? */
+	APP_STATE_BOOTING,       /* å¼€æœºåˆå§‹åŒ–ï¼šæŒ‰é¡ºåºå¯åŠ¨å·¥ä½œå¤–è®¾ */
+	APP_STATE_READY,         /* å·²å¼€æœºä½†å°šæœªè¾“å‡º */
+	APP_STATE_THERAPY,       /* æ²»ç–—æ¨¡å¼ */
+	APP_STATE_PRESSURE,      /* å‹åŠ›æ£€æµ‹/å……æ”¾æ°”æ¨¡å¼ */
+	APP_STATE_CHARGING,      /* å…³æœºå……ç”µåŠ¨ç”»; å¯ä»¥ä¸€è¾¹å……ç”µä¸€è¾¹å·¥ä½œ */
+	APP_STATE_FAULT          /* æ•…éšœæ¨¡å¼ï¼šç«‹å³å…³é—­æ‰€æœ‰å±é™©è¾“å‡º */
 } AppState_t;
-
-typedef enum
-{
-	APP_MODE_THERAPY = 0,
-	APP_MODE_PRESSURE
-} AppWorkMode_t;
 
 typedef enum
 {
@@ -1114,7 +207,7 @@ typedef enum
 #define UI_BEEP_ON_MS              60U
 #define UI_BEEP_GAP_MS             80U
 
-/* µç³Ø¼ì²â²ÎÊı£ºPA3 Îª 1/2 µç³Ø·ÖÑ¹£¬PA6 ÎªÍâ²¿ 2.5 V ²Î¿¼¡£ */
+/* ç”µæ± æ£€æµ‹å‚æ•°ï¼šPA3 ï¿½? 1/2 ç”µæ± åˆ†å‹ï¼ŒPA6 ä¸ºå¤–ï¿½? 2.5 V å‚è€ƒï¿½? */
 #define BATTERY_ADC_SAMPLE_COUNT          8U
 #define BATTERY_ADC_USED_SAMPLE_COUNT     6U
 #define BATTERY_REFERENCE_MV              2500U
@@ -1133,11 +226,9 @@ typedef enum
 
 typedef struct
 {
-	AppState_t state;        /* µ±Ç°ÏµÍ³×´Ì¬ */
-	AppState_t next_state;   /* ÇëÇóÇĞ»»µ½µÄ×´Ì¬ */
-	AppWorkMode_t work_mode; /* ÓÃ»§Ñ¡ÔñµÄ¹¤×÷Ä£Ê½ */
-	uint8_t ui_dirty;        /* Îª 1 Ê±²ÅÖØĞÂË¢ĞÂ LCD */
-	uint8_t fault_code;      /* 0 ±íÊ¾ÎŞ¹ÊÕÏ£¬ÆäËûÖµºóĞøÍ³Ò»¶¨Òå */
+	AppState_t state;        /* å½“å‰ç³»ç»ŸçŠ¶ï¿½? */
+	AppState_t next_state;   /* è¯·æ±‚åˆ‡æ¢åˆ°çš„çŠ¶ï¿½? */
+	uint8_t ui_dirty;        /* ï¿½? 1 æ—¶æ‰é‡æ–°åˆ·æ–° LCD */
 } AppContext_t;
 
 typedef struct
@@ -1159,8 +250,8 @@ typedef struct
 typedef struct
 {
 	uint8_t lcd_initialized;
-	uint8_t selected_channel;       /* 0£ºÍ¨µÀ 1£¬1£ºÍ¨µÀ 2 */
-	uint8_t formula;                /* ´¦·½±àºÅ£º0¡«2£¬LCD ÏÔÊ¾ 1¡«3 */
+	uint8_t selected_channel;       /* 0ï¼šé€šé“ 1ï¿½?1ï¼šé€šé“ 2 */
+	uint8_t formula;                /* å¤„æ–¹ç¼–å·ï¿½?0ï¿½?2ï¼ŒLCD æ˜¾ç¤º 1ï¿½?3 */
 	uint8_t power_ch1;
 	uint8_t power_ch2;
 	uint8_t set_minutes;
@@ -1168,14 +259,14 @@ typedef struct
 	uint8_t remaining_seconds;
 	uint8_t blink_on;
 	uint16_t blink_elapsed_ms;
-	uint8_t battery_level;          /* 0¡«3 ¸ñ */
-	uint8_t battery_low;            /* µÍµçÁ¿Ê±Õû¸öµç³ØÍ¼±êÉÁË¸ */
+	uint8_t battery_level;          /* 0ï¿½?3 ï¿½? */
+	uint8_t battery_low;            /* ä½ç”µé‡æ—¶æ•´ä¸ªç”µæ± å›¾æ ‡é—ªçƒ */
 	uint8_t charger_connected;
 	uint8_t charger_full;
 	uint8_t charge_frame;
-	uint8_t ble_connected;          /* Î´Á¬½Ó³£ÁÁ£¬Á¬½ÓºóÉÁË¸ */
-	uint16_t pressure_value;        /* ÒÑ»»ËãµÄÏÔÊ¾Öµ£¬·¶Î§ÏŞÖÆÎª 0¡«999 */
-	uint8_t pressure_result_blink;  /* ²âÁ¿½á¹û³ÖĞøÉÁË¸£¬Ö±µ½ÔÙ´Î°´¼ü */
+	uint8_t ble_connected;          /* æœªè¿æ¥å¸¸äº®ï¼Œè¿æ¥åé—ªï¿½? */
+	uint16_t pressure_value;        /* å·²æ¢ç®—çš„æ˜¾ç¤ºå€¼ï¼ŒèŒƒå›´é™åˆ¶ï¿½? 0ï¿½?999 */
+	uint8_t pressure_result_blink;  /* æµ‹é‡ç»“æœæŒç»­é—ªçƒï¼Œç›´åˆ°å†æ¬¡æŒ‰ï¿½? */
 	PressureAction_t pressure_action;
 	uint16_t pressure_action_ms;
 	uint8_t buzzer_initialized;
@@ -1206,12 +297,10 @@ typedef struct
 	uint8_t low_confirm_count;
 	uint8_t recover_confirm_count;
 	uint8_t error_reported;
-	uint16_t raw_battery;
-	uint16_t raw_reference;
 	uint16_t voltage_mv;
 } BatteryContext_t;
 
-/* SysTick ÖĞ¶ÏÃ¿ 1 ms Ôö¼ÓÒ»´Î¡£ÖĞ¶ÏºÍÖ÷Ñ­»·¹²Ïí£¬Òò´Ë±ØĞëÊ¹ÓÃ volatile¡£ */
+/* SysTick ä¸­æ–­ï¿½? 1 ms å¢åŠ ä¸€æ¬¡ã€‚ä¸­æ–­å’Œä¸»å¾ªç¯å…±äº«ï¼Œå› æ­¤å¿…é¡»ä½¿ç”¨ volatileï¿½? */
 static volatile uint32_t s_system_tick_ms = 0U;
 static AppContext_t s_app;
 static AppScheduler_t s_scheduler;
@@ -1279,7 +368,7 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
                                        uint16_t reference_adc);
 static void Battery_Task100ms(void);
 
-/* ºóĞøÀ¶ÑÀ¡¢ADC ºÍÑ¹Á¦Ëã·¨Í¨¹ıÕâĞ©½Ó¿Ú¸üĞÂ UI£¬²»Ö±½Ó²Ù×÷¶ÎÂë¡£ */
+/* åç»­è“ç‰™ã€ADC å’Œå‹åŠ›ç®—æ³•é€šè¿‡è¿™äº›æ¥å£æ›´æ–° UIï¼Œä¸ç›´æ¥æ“ä½œæ®µç ï¿½? */
 void AppUi_SetBleConnected(uint8_t connected);
 void AppUi_SetBattery(uint8_t level, uint8_t low_battery);
 void AppUi_SetPressureResult(uint16_t value);
@@ -1297,15 +386,15 @@ static void Sensor_Task100ms(void);
 static void Power_Task1000ms(void);
 
 /*
- * 1 ms ÏµÍ³½ÚÅÄÈë¿Ú¡£
- * SysTick_Handler() Ö»µ÷ÓÃ´Ëº¯Êı£¬²»ÒªÔÚÖĞ¶ÏÀïÔö¼ÓÒµÎñ´¦Àí¡£
+ * 1 ms ç³»ç»ŸèŠ‚æ‹å…¥å£ï¿½?
+ * SysTick_Handler() åªè°ƒç”¨æ­¤å‡½æ•°ï¼Œä¸è¦åœ¨ä¸­æ–­é‡Œå¢åŠ ä¸šåŠ¡å¤„ç†ï¿½?
  */
 void App_Tick1msISR(void)
 {
 	s_system_tick_ms++;
 }
 
-/* °å¼¶»ù´¡³õÊ¼»¯£ºÕâÀïÖ»³õÊ¼»¯ËùÓĞ×´Ì¬¶¼»áÊ¹ÓÃµÄ×ÊÔ´¡£ */
+/* æ¿çº§åŸºç¡€åˆå§‹åŒ–ï¼šè¿™é‡Œåªåˆå§‹åŒ–æ‰€æœ‰çŠ¶æ€éƒ½ä¼šä½¿ç”¨çš„èµ„æºï¿½? */
 static void Board_Init(void)
 {
 	RCC_Configuration();
@@ -1314,13 +403,13 @@ static void Board_Init(void)
 	SEGGER_RTT_Init();
 	LOG_I("t=%u system init, core=%u Hz", s_system_tick_ms, SystemCoreClock);
 
-	/* GPIO ³õÊ¼»¯Íê³Éºó£¬µÚÒ»Ê±¼ä°ÑÖ´ĞĞÆ÷ÖÃÓÚ°²È«×´Ì¬¡£ */
+	/* GPIO åˆå§‹åŒ–å®Œæˆåï¼Œç¬¬ä¸€æ—¶é—´æŠŠæ‰§è¡Œå™¨ç½®äºå®‰å…¨çŠ¶æ€ï¿½? */
 	Board_EnterSafeState();
 
-	/* Ê¹ÓÃ¶ÀÁ¢µÄ SysTick ×÷ÎªÓ¦ÓÃ²ã 1 ms ½ÚÅÄ¡£ */
+	/* ä½¿ç”¨ç‹¬ç«‹ï¿½? SysTick ä½œä¸ºåº”ç”¨ï¿½? 1 ms èŠ‚æ‹ï¿½? */
 	if (SysTick_Config(SystemCoreClock / 1000U) != 0U)
 	{
-		/* ½ÚÅÄ³õÊ¼»¯Ê§°ÜÊ±±£³Ö°²È«×´Ì¬£¬²»¼ÌĞøÆô¶¯ÒµÎñ¡£ */
+		/* èŠ‚æ‹åˆå§‹åŒ–å¤±è´¥æ—¶ä¿æŒå®‰å…¨çŠ¶æ€ï¼Œä¸ç»§ç»­å¯åŠ¨ä¸šåŠ¡ï¿½? */
 		LOG_E("t=%u SysTick init failed", s_system_tick_ms);
 		while (1)
 		{
@@ -1328,7 +417,7 @@ static void Board_Init(void)
 	}
 }
 
-/* ½«µ±Ç°ÄÜ¹»Ö±½Ó¿ØÖÆµÄÊä³öÖÃÓÚ°²È«µçÆ½¡£ */
+/* å°†å½“å‰èƒ½å¤Ÿç›´æ¥æ§åˆ¶çš„è¾“å‡ºç½®äºå®‰å…¨ç”µå¹³ï¿½? */
 static void Board_EnterSafeState(void)
 {
 	Treatment_StopOutputs();
@@ -1341,12 +430,12 @@ static void Board_EnterSafeState(void)
 	BLEEN_OFF;
 	SWEN_OFF;
 
-	/* ·äÃùÆ÷ÊôÓÚ½»»¥ÌáÊ¾£¬ÓÉ·äÃùÈÎÎñ¸ºÔğÍ£Ö¹£¬²»ÓëÎ£ÏÕÊä³ö»ìÔÚÒ»Æğ¡£ */
+	/* èœ‚é¸£å™¨å±äºäº¤äº’æç¤ºï¼Œç”±èœ‚é¸£ä»»åŠ¡è´Ÿè´£åœæ­¢ï¼Œä¸ä¸å±é™©è¾“å‡ºæ··åœ¨ä¸€èµ·ï¿½? */
 }
 
 static void Treatment_StopOutputs(void)
 {
-	/* UI Ä¿±êÖµºÍÒÅÁô²¨ĞÎÖĞ¶Ï¶ÁÈ¡µÄµµÎ»Í¬Ê±¹éÁã¡£ */
+	/* UI ç›®æ ‡å€¼å’Œé—ç•™æ³¢å½¢ä¸­æ–­è¯»å–çš„æ¡£ä½åŒæ—¶å½’é›¶ï¿½? */
 	s_ui.power_ch1 = 0U;
 	s_ui.power_ch2 = 0U;
 	Pwr1 = 0U;
@@ -1373,14 +462,12 @@ static void Pressure_StopOutputs(void)
 	SWEN_OFF;
 }
 
-/* ³õÊ¼»¯Ó¦ÓÃ×´Ì¬£¬²»ÔÚÕâÀïÖ´ĞĞºÄÊ±»ò×èÈû²Ù×÷¡£ */
+/* åˆå§‹åŒ–åº”ç”¨çŠ¶æ€ï¼Œä¸åœ¨è¿™é‡Œæ‰§è¡Œè€—æ—¶æˆ–é˜»å¡æ“ä½œï¿½? */
 static void App_Init(void)
 {
 	s_app.state = APP_STATE_POWER_OFF;
 	s_app.next_state = APP_STATE_POWER_OFF;
-	s_app.work_mode = APP_MODE_THERAPY;
 	s_app.ui_dirty = 1U;
-	s_app.fault_code = 0U;
 
 	s_scheduler.last_10ms = s_system_tick_ms;
 	s_scheduler.last_50ms = s_system_tick_ms;
@@ -1407,7 +494,7 @@ static void App_Init(void)
 	      "DISCONNECTED",
 	      (uint8_t)READ_CHARG, (uint8_t)READ_STDBY, s_ui.charger_full);
 
-	/* ÉÏµçÊ±ÓÅÏÈÊ¶±ğ³äµç×´Ì¬£¬±ÜÃâÔÚ½ÓÈë³äµçÆ÷Ê±Æô¶¯ÖÎÁÆÊä³ö¡£ */
+	/* ä¸Šç”µæ—¶ä¼˜å…ˆè¯†åˆ«å……ç”µçŠ¶æ€ï¼Œé¿å…åœ¨æ¥å…¥å……ç”µå™¨æ—¶å¯åŠ¨æ²»ç–—è¾“å‡ºï¿½? */
 	if (s_ui.charger_connected != 0U)
 	{
 		App_RequestState(APP_STATE_CHARGING);
@@ -1415,7 +502,7 @@ static void App_Init(void)
 	}
 }
 
-/* Ö÷Ñ­»·µÄÒ»´Îµ÷¶È£ºÃ¿¸öÈÎÎñ±ØĞë¿ìËÙ·µ»Ø£¬½ûÖ¹ÔÚÈÎÎñÄÚ²¿³¤Ê±¼ä Delay¡£ */
+/* ä¸»å¾ªç¯çš„ä¸€æ¬¡è°ƒåº¦ï¼šæ¯ä¸ªä»»åŠ¡å¿…é¡»å¿«é€Ÿè¿”å›ï¼Œç¦æ­¢åœ¨ä»»åŠ¡å†…éƒ¨é•¿æ—¶é—´ Delayï¿½? */
 static void App_RunOnce(void)
 {
 	if (Scheduler_IsDue(&s_scheduler.last_10ms, 10U))
@@ -1442,7 +529,7 @@ static void App_RunOnce(void)
 		Power_Task1000ms();
 	}
 
-	/* ´¦ÀíÖÜÆÚÈÎÎñ²úÉúµÄ×´Ì¬ÇĞ»»ÇëÇó¡£ */
+	/* å¤„ç†å‘¨æœŸä»»åŠ¡äº§ç”Ÿçš„çŠ¶æ€åˆ‡æ¢è¯·æ±‚ï¿½? */
 	App_ApplyStateTransition();
 }
 
@@ -1478,13 +565,13 @@ static const char *App_EventName(AppEvent_t event)
 	}
 }
 
-/* ÇëÇó×´Ì¬ÇĞ»»£¬²»ÔÊĞíÒµÎñ´úÂëÖ±½ÓĞŞ¸Äµ±Ç°×´Ì¬¡£ */
+/* è¯·æ±‚çŠ¶æ€åˆ‡æ¢ï¼Œä¸å…è®¸ä¸šåŠ¡ä»£ç ç›´æ¥ä¿®æ”¹å½“å‰çŠ¶æ€ï¿½? */
 static void App_RequestState(AppState_t next_state)
 {
 	s_app.next_state = next_state;
 }
 
-/* ¼¯ÖĞÖ´ĞĞ×´Ì¬ÍË³öºÍ½øÈë¶¯×÷£¬·ÀÖ¹ÍâÉèÖ»¿ª²»¹Ø¡£ */
+/* é›†ä¸­æ‰§è¡ŒçŠ¶æ€é€€å‡ºå’Œè¿›å…¥åŠ¨ä½œï¼Œé˜²æ­¢å¤–è®¾åªå¼€ä¸å…³ï¿½? */
 static void App_ApplyStateTransition(void)
 {
 	if (s_app.state == s_app.next_state)
@@ -1549,8 +636,8 @@ static void App_StateEnter(AppState_t state)
 
 		case APP_STATE_BOOTING:
 			/*
-			 * µ±Ç°½×¶ÎÖ»Æô¶¯ UI¡£ADC¡¢ÖÎÁÆºÍÆø±ÃÍâÉè¼ÌĞø±£³Ö¹Ø±Õ£¬
-			 * µÈÏàÓ¦Ä£¿éÍê³ÉºóÔÙÖğÏî¼ÓÈëÕâÀï¡£
+			 * å½“å‰é˜¶æ®µåªå¯åŠ¨UIã€‚ADCã€æ²»ç–—å’Œæ°”æ³µå¤–è®¾ç»§ç»­ä¿æŒå…³é—­
+			 * ç­‰ç›¸åº”æ¨¡å—å®Œæˆåå†é€é¡¹åŠ å…¥è¿™é‡Œ
 			 */
 			/* POWER_OFF and CHARGING are already safe source states. Keep BLEN
 			 * stable here so charge-to-work startup does not pulse the backlight off. */
@@ -1572,14 +659,12 @@ static void App_StateEnter(AppState_t state)
 
 		case APP_STATE_THERAPY:
 			Ui_InitHardware();
-			s_app.work_mode = APP_MODE_THERAPY;
 			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 			s_app.ui_dirty = 1U;
 			break;
 
 		case APP_STATE_PRESSURE:
 			Ui_InitHardware();
-			s_app.work_mode = APP_MODE_PRESSURE;
 			s_ui.power_ch1 = 0U;
 			s_ui.power_ch2 = 0U;
 			s_app.ui_dirty = 1U;
@@ -1591,7 +676,7 @@ static void App_StateEnter(AppState_t state)
 	}
 }
 
-/* Ê¹ÓÃÎŞ·ûºÅ¼õ·¨±£Ö¤ÏµÍ³½ÚÅÄÒç³öºóÈÔÄÜÕıÈ·ÅĞ¶ÏÖÜÆÚ¡£ */
+/* ä½¿ç”¨æ— ç¬¦å·å‡æ³•ä¿è¯ç³»ç»ŸèŠ‚æ‹æº¢å‡ºåä»èƒ½æ­£ç¡®åˆ¤æ–­å‘¨æœŸï¿½? */
 static uint8_t Scheduler_IsDue(uint32_t *last_tick, uint32_t period_ms)
 {
 	uint32_t now = s_system_tick_ms;
@@ -1601,7 +686,7 @@ static uint8_t Scheduler_IsDue(uint32_t *last_tick, uint32_t period_ms)
 		return 0U;
 	}
 
-	/* Õı³£Çé¿öÏÂÀÛ¼ÓÖÜÆÚ£»×èÈû¹ı¾ÃÊ±Ö±½Ó×·µ½µ±Ç°Ê±¼ä£¬±ÜÃâÁ¬Ğø²¹ÅÜ¡£ */
+	/* æ­£å¸¸æƒ…å†µä¸‹ç´¯åŠ å‘¨æœŸï¼›é˜»å¡è¿‡ä¹…æ—¶ç›´æ¥è¿½åˆ°å½“å‰æ—¶é—´ï¼Œé¿å…è¿ç»­è¡¥è·‘ï¿½? */
 	if ((uint32_t)(now - *last_tick) > (period_ms * 4U))
 	{
 		*last_tick = now;
@@ -1677,7 +762,7 @@ static void Key_Update(KeyId_t key_id)
 
 		if (key->stable_pressed != raw_pressed)
 		{
-			/* ¶Ì°´Í³Ò»ÔÚÎÈ¶¨ÊÍ·ÅÊ±²úÉú£¬³¤°´ÊÍ·ÅÊ±²»ÔÙ²¹·¢¶Ì°´¡£ */
+			/* çŸ­æŒ‰ç»Ÿä¸€åœ¨ç¨³å®šé‡Šæ”¾æ—¶äº§ç”Ÿï¼Œé•¿æŒ‰é‡Šæ”¾æ—¶ä¸å†è¡¥å‘çŸ­æŒ‰ï¿½? */
 			if ((key->stable_pressed != 0U) &&
 			    (raw_pressed == 0U) &&
 			    (key->long_reported == 0U))
@@ -1796,7 +881,7 @@ static void Charger_Update(void)
 	{
 		s_ui.charger_full = full;
 		s_app.ui_dirty = 1U;
-		/* °Î³öÊ±Á½¸öµÍÓĞĞ§ĞÅºÅ»áÍ¬Ê±ÊÍ·Å£¬½»¸ø²å°ÎÈ¥¶¶ÈÕÖ¾±¨¸æ¡£ */
+		/* æ‹”å‡ºæ—¶ä¸¤ä¸ªä½æœ‰æ•ˆä¿¡å·ä¼šåŒæ—¶é‡Šæ”¾ï¼Œäº¤ç»™æ’æ‹”å»æŠ–æ—¥å¿—æŠ¥å‘Šï¿½? */
 		if ((connected != 0U) && (s_charger_stable != 0U))
 		{
 			LOG_I("t=%u charger status=%s charg_n=%u standby_n=%u",
@@ -1840,7 +925,7 @@ static uint8_t EventQueue_Push(AppEvent_t event)
 
 	if (next_index == s_event_queue.read_index)
 	{
-		/* ¶ÓÁĞÂúÊ±±£ÁôÒÑÓĞÊÂ¼ş£¬±ÜÃâ¸²¸ÇÉĞÎ´´¦ÀíµÄ¹Ø»úÊÂ¼ş¡£ */
+		/* é˜Ÿåˆ—æ»¡æ—¶ä¿ç•™å·²æœ‰äº‹ä»¶ï¼Œé¿å…è¦†ç›–å°šæœªå¤„ç†çš„å…³æœºäº‹ä»¶ï¿½? */
 		LOG_W("t=%u event queue full, drop=%s", s_system_tick_ms,
 		      App_EventName(event));
 		return 0U;
@@ -1916,11 +1001,11 @@ static void App_HandleEvent(AppEvent_t event)
 		return;
 	}
 
-	/* ¹¤×÷×´Ì¬ÏÂ¼ÇÂ¼ÓĞĞ§²Ù×÷£»±³¹â±¾Éí¸úËæ UI ÉúÃüÖÜÆÚ¡£ */
+	/* å·¥ä½œçŠ¶æ€ä¸‹è®°å½•æœ‰æ•ˆæ“ä½œï¼›èƒŒå…‰æœ¬èº«è·Ÿï¿½? UI ç”Ÿå‘½å‘¨æœŸï¿½? */
 	Ui_RecordActivity();
 	if (s_ui.pressure_result_blink != 0U)
 	{
-		/* ĞèÇóÒªÇóÑ¹Á¦½á¹û³ÖĞøÉÁË¸£¬Ö±µ½ÓÃ»§ÔÙ´Î°´ÏÂÈÎÒâ°´¼ü¡£ */
+		/* éœ€æ±‚è¦æ±‚å‹åŠ›ç»“æœæŒç»­é—ªçƒï¼Œç›´åˆ°ç”¨æˆ·å†æ¬¡æŒ‰ä¸‹ä»»æ„æŒ‰é”®ï¿½? */
 		s_ui.pressure_result_blink = 0U;
 		s_app.ui_dirty = 1U;
 	}
@@ -1965,7 +1050,7 @@ static void App_HandleEvent(AppEvent_t event)
 			}
 			else if (s_app.state == APP_STATE_PRESSURE)
 			{
-				/* Çá°´Îª³äÆøÆô¶¯/Í£Ö¹£»ÕæÊµÍê³ÉÌõ¼şÓÉÑ¹Á¦¿ØÖÆÄ£¿éÍ¨Öª¡£ */
+				/* è½»æŒ‰ä¸ºå……æ°”å¯ï¿½?/åœæ­¢ï¼›çœŸå®å®Œæˆæ¡ä»¶ç”±å‹åŠ›æ§åˆ¶æ¨¡å—é€šçŸ¥ï¿½? */
 				if (s_ui.pressure_action == PRESSURE_ACTION_INFLATING)
 				{
 					s_ui.pressure_action = PRESSURE_ACTION_IDLE;
@@ -2003,7 +1088,7 @@ static void App_HandleEvent(AppEvent_t event)
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				Ui_Beep(1U);
-				/* ÁÆ³Ì½áÊøºó±£³ÖÏÔÊ¾ 0£¬Ö±µ½ÓÃ»§ÔÙ´ÎÔö¼ÓÇ¿¶È¿ªÊ¼ĞÂÁÆ³Ì¡£ */
+				/* ç–—ç¨‹ç»“æŸåä¿æŒæ˜¾ï¿½? 0ï¼Œç›´åˆ°ç”¨æˆ·å†æ¬¡å¢åŠ å¼ºåº¦å¼€å§‹æ–°ç–—ç¨‹ï¿½? */
 				if ((s_ui.power_ch1 == 0U) &&
 				    (s_ui.power_ch2 == 0U) &&
 				    (s_ui.remaining_minutes == 0U) &&
@@ -2054,7 +1139,7 @@ static void App_HandleEvent(AppEvent_t event)
 
 static void Ui_InitModel(void)
 {
-	/* LCD/·äÃùÆ÷³õÊ¼»¯±êÖ¾±£Áô£¬ÆäËû×Ö¶Î»Ö¸´Ä¬ÈÏ½»»¥×´Ì¬¡£ */
+	/* LCD/èœ‚é¸£å™¨åˆå§‹åŒ–æ ‡å¿—ä¿ç•™ï¼Œå…¶ä»–å­—æ®µæ¢å¤é»˜è®¤äº¤äº’çŠ¶æ€ï¿½? */
 	s_ui.selected_channel = 0U;
 	s_ui.formula = 0U;
 	s_ui.power_ch1 = 0U;
@@ -2096,7 +1181,7 @@ static void Ui_InitHardware(void)
 		s_ui.buzzer_initialized = 1U;
 	}
 
-	/* UI ¿ªÆôÆÚ¼ä±³¹â³£ÁÁ£¬²»ÔÙÊ¹ÓÃÎŞ²Ù×÷µ¹¼ÆÊ±µ¥¶À¹Ø±Õ±³¹â¡£ */
+	/* UI å¼€å¯æœŸé—´èƒŒå…‰å¸¸äº®ï¼Œä¸å†ä½¿ç”¨æ— æ“ä½œå€’è®¡æ—¶å•ç‹¬å…³é—­èƒŒå…‰ï¿½? */
 	BLEN_ON;
 	LOG_I("t=%u ui hardware lcd=%u blen_out=%u blen_pin=%u",
 	      s_system_tick_ms, s_ui.lcd_initialized,
@@ -2153,8 +1238,8 @@ static uint8_t Ui_GetBatteryDisplayLevel(void)
 }
 
 /*
- * LCD Ö»ÏÔÊ¾ÕûÊı·ÖÖÓ£¬Òò´Ë¶ÔÊ£ÓàÊ±¼äÏòÉÏÈ¡Õû£º
- * 9:59¡«9:01 ÏÔÊ¾ 10£¬Ö»ÓĞµ½ 9:00 ²ÅÏÔÊ¾ 9¡£
+ * LCD åªæ˜¾ç¤ºæ•´æ•°åˆ†é’Ÿï¼Œå› æ­¤å¯¹å‰©ä½™æ—¶é—´å‘ä¸Šå–æ•´ï¼š
+ * 9:59ï¿½?9:01 æ˜¾ç¤º 10ï¼Œåªæœ‰åˆ° 9:00 æ‰æ˜¾ï¿½? 9ï¿½?
  */
 static uint8_t Ui_GetDisplayMinutes(void)
 {
@@ -2190,7 +1275,7 @@ static void Ui_RenderTherapy(void)
 
 	if (s_ui.blink_on == 0U)
 	{
-		/* P Í¼±êÓë´¦·½Êı×Ö×÷ÎªÒ»¸öÕûÌåÉÁË¸¡£ */
+		/* P å›¾æ ‡ä¸å¤„æ–¹æ•°å­—ä½œä¸ºä¸€ä¸ªæ•´ä½“é—ªçƒï¿½? */
 		formula_icon = 0U;
 		formula_value = 10U;
 		if (s_ui.selected_channel == 0U)
@@ -2204,7 +1289,7 @@ static void Ui_RenderTherapy(void)
 
 	}
 
-	/* À¶ÑÀÎ´Á¬½ÓÊ±³£ÁÁ£¬Á¬½Ó³É¹¦ºóËæÍ³Ò»ÉÁË¸½ÚÅÄÉÁË¸¡£ */
+	/* è“ç‰™æœªè¿æ¥æ—¶å¸¸äº®ï¼Œè¿æ¥æˆåŠŸåéšç»Ÿä¸€é—ªçƒèŠ‚æ‹é—ªçƒï¿½? */
 	if ((s_ui.ble_connected != 0U) && (s_ui.blink_on == 0U))
 	{
 		ble_icon = 0U;
@@ -2324,7 +1409,7 @@ static void Ui_Render(void)
 			break;
 
 		case APP_STATE_FAULT:
-			/* µ±Ç° LCD ÎŞ×ÖÄ¸×ÖÄ££¬¹ÊÕÏ½çÃæÔİÊ±ÇåÆÁ²¢±£Áô±³¹â¡£ */
+			/* å½“å‰ LCD æ— å­—æ¯å­—æ¨¡ï¼Œæ•…éšœç•Œé¢æš‚æ—¶æ¸…å±å¹¶ä¿ç•™èƒŒå…‰ï¿½? */
 			Ui_ClearDisplay();
 			break;
 
@@ -2403,14 +1488,12 @@ static void Battery_InitModel(void)
 	s_battery.low_confirm_count = 0U;
 	s_battery.recover_confirm_count = 0U;
 	s_battery.error_reported = 0U;
-	s_battery.raw_battery = 0U;
-	s_battery.raw_reference = 0U;
 	s_battery.voltage_mv = 0U;
 }
 
 static void Battery_StartSession(void)
 {
-	/* Ã¿´Î¿ª»úÖØĞÂ½¨Á¢ÂË²¨³õÖµ£¬±ÜÃâÑØÓÃÉÏÒ»´Î¹Ø»úÇ°µÄÊı¾İ¡£ */
+	/* æ¯æ¬¡å¼€æœºé‡æ–°å»ºç«‹æ»¤æ³¢åˆå€¼ï¼Œé¿å…æ²¿ç”¨ä¸Šä¸€æ¬¡å…³æœºå‰çš„æ•°æ®ï¿½? */
 	Battery_Stop();
 	Battery_InitModel();
 	s_battery.session_active = 1U;
@@ -2435,8 +1518,8 @@ static void Battery_Stop(void)
 }
 
 /*
- * Á¬Ğø¶ÁÈ¡ 8 ×éµç³Ø/²Î¿¼Í¨µÀ£¬·Ö±ğÈ¥µôÒ»¸ö×î´óÖµºÍÒ»¸ö×îĞ¡Öµ£¬
- * ¶ÔÊ£Óà 6 ×éÇóÆ½¾ù¡£ÕâÑù¼ÈÄÜÒÖÖÆÅ¼·¢¼â·å£¬ÓÖ²»»áÈÃÈÎÎñ³¤ÆÚ×èÈû¡£
+ * è¿ç»­è¯»å– 8 ç»„ç”µï¿½?/å‚è€ƒé€šé“ï¼Œåˆ†åˆ«å»æ‰ä¸€ä¸ªæœ€å¤§å€¼å’Œä¸€ä¸ªæœ€å°å€¼ï¼Œ
+ * å¯¹å‰©ï¿½? 6 ç»„æ±‚å¹³å‡ã€‚è¿™æ ·æ—¢èƒ½æŠ‘åˆ¶å¶å‘å°–å³°ï¼Œåˆä¸ä¼šè®©ä»»åŠ¡é•¿æœŸé˜»å¡ï¿½?
  */
 static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
                                       uint16_t *reference_adc)
@@ -2465,7 +1548,7 @@ static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
 	{
 		battery_sample = ADC_GetData(ADC1, ADC1_Channel_04_PA3);
 
-		/* 0 Í¬Ê±Ò²ÊÇ ADC_GetData() µÄ³¬Ê±·µ»ØÖµ¡£ */
+		/* 0 åŒæ—¶ä¹Ÿæ˜¯ ADC_GetData() çš„è¶…æ—¶è¿”å›å€¼ï¿½? */
 		if (battery_sample == 0U)
 		{
 			return 0U;
@@ -2492,7 +1575,7 @@ static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
 	{
 		reference_sample = ADC_GetData(ADC1, ADC1_Channel_03_PA6);
 
-		/* Íâ²¿ 2.5 V ²Î¿¼²»¿ÉÄÜÎª 0¡£ */
+		/* å¤–éƒ¨ 2.5 V å‚è€ƒä¸å¯èƒ½ï¿½? 0ï¿½? */
 		if (reference_sample == 0U)
 		{
 			return 0U;
@@ -2523,12 +1606,12 @@ static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
 }
 
 /*
- * PA6 µÄ 2.5 V ¾«ÃÜ²Î¿¼ºÍ PA3 µÄ 1/2 µç³Ø·ÖÑ¹Ê¹ÓÃÍ¬Ò»¸ö ADC ²Î¿¼µçÔ´£º
+ * PA6 ï¿½? 2.5 V ç²¾å¯†å‚è€ƒå’Œ PA3 ï¿½? 1/2 ç”µæ± åˆ†å‹ä½¿ç”¨åŒä¸€ï¿½? ADC å‚è€ƒç”µæºï¼š
  *
  *   ADC_BATT / ADC_REF = (Vbat / 2) / 2500 mV
  *   Vbat(mV) = ADC_BATT * 2500 * 2 / ADC_REF
  *
- * ±ÈÖµ·¨»áÔ¼µô ADC ÂúÁ¿³ÌºÍ VDDA£¬Òò´Ë VDDA ²¨¶¯²»»áÖ±½Ó´øÈë½á¹û¡£
+ * æ¯”å€¼æ³•ä¼šçº¦ï¿½? ADC æ»¡é‡ç¨‹å’Œ VDDAï¼Œå› ï¿½? VDDA æ³¢åŠ¨ä¸ä¼šç›´æ¥å¸¦å…¥ç»“æœï¿½?
  */
 static uint16_t Battery_CalculateVoltageMv(uint16_t battery_adc,
                                           uint16_t reference_adc)
@@ -2562,7 +1645,7 @@ static uint8_t Battery_CalculateLevel(uint16_t voltage_mv)
 	return 0U;
 }
 
-/* ÑØÓÃ¾É³ÌĞòµÄ 3.5¡«4.2 V ÏßĞÔ°Ù·Ö±È£¬½ö¹©Í¨ĞÅ/µ÷ÊÔÊ¹ÓÃ¡£ */
+/* æ²¿ç”¨æ—§ç¨‹åºçš„ 3.5ï¿½?4.2 V çº¿æ€§ç™¾åˆ†æ¯”ï¼Œä»…ä¾›é€šä¿¡/è°ƒè¯•ä½¿ç”¨ï¿½? */
 static uint8_t Battery_CalculatePercent(uint16_t voltage_mv)
 {
 	uint32_t percent;
@@ -2609,7 +1692,7 @@ static void Battery_UpdateLowState(uint16_t voltage_mv)
 	}
 	else
 	{
-		/* 3.5¡«3.6 V Îª»Ø²îÇø£¬±£³Öµ±Ç°µÍµç×´Ì¬¡£ */
+		/* 3.5ï¿½?3.6 V ä¸ºå›å·®åŒºï¼Œä¿æŒå½“å‰ä½ç”µçŠ¶æ€ï¿½? */
 		s_battery.low_confirm_count = 0U;
 		s_battery.recover_confirm_count = 0U;
 	}
@@ -2636,9 +1719,6 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
 		return;
 	}
 
-	s_battery.raw_battery = battery_adc;
-	s_battery.raw_reference = reference_adc;
-
 	if (s_battery.valid == 0U)
 	{
 		s_battery.voltage_mv = measured_mv;
@@ -2646,7 +1726,7 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
 	}
 	else
 	{
-		/* Ò»½×µÍÍ¨£ºĞÂÖµÕ¼ 1/4£¬¾ÉÖµÕ¼ 3/4£¬½µµÍ¸ºÔØÂö³åÔì³ÉµÄÌø¶¯¡£ */
+		/* ä¸€é˜¶ä½é€šï¼šæ–°å€¼å  1/4ï¼Œæ—§å€¼å  3/4ï¼Œé™ä½è´Ÿè½½è„‰å†²é€ æˆçš„è·³åŠ¨ï¿½? */
 		s_battery.voltage_mv = (uint16_t)(((uint32_t)s_battery.voltage_mv * 3U +
 		                                        measured_mv + 2U) / 4U);
 	}
@@ -2733,14 +1813,14 @@ static void Battery_Task100ms(void)
 
 	if (s_battery.measurement_pending != 0U)
 	{
-		/* BATEN ÒÑ±£³ÖÒ»¸ö 100 ms ÈÎÎñÖÜÆÚ£¬·ÖÑ¹½ÚµãÒÑ¾­ÎÈ¶¨¡£ */
+		/* BATEN å·²ä¿æŒä¸€ï¿½? 100 ms ä»»åŠ¡å‘¨æœŸï¼Œåˆ†å‹èŠ‚ç‚¹å·²ç»ç¨³å®šï¿½? */
 		if (Battery_ReadAveragedAdc(&battery_adc, &reference_adc) != 0U)
 		{
 			Battery_ProcessMeasurement(battery_adc, reference_adc);
 		}
 		else
 		{
-			/* ×ª»»Òì³£Ê±ÖØĞÂ³õÊ¼»¯ ADC£¬µ«±£ÁôÉÏÒ»±ÊÓĞĞ§ÏÔÊ¾¡£ */
+			/* è½¬æ¢å¼‚å¸¸æ—¶é‡æ–°åˆå§‹åŒ– ADCï¼Œä½†ä¿ç•™ä¸Šä¸€ç¬”æœ‰æ•ˆæ˜¾ç¤ºï¿½? */
 			if (s_battery.error_reported == 0U)
 			{
 				LOG_E("t=%u battery ADC conversion failed", s_system_tick_ms);
@@ -2768,7 +1848,7 @@ static void Battery_Task100ms(void)
 		return;
 	}
 
-	/* Ö»ÔÚ²ÉÑùÇ°´ò¿ª·ÖÑ¹¼ì²âµçÂ·£¬ÏÂÒ»´Î 100 ms ÈÎÎñÔÙ¶ÁÈ¡¡£ */
+	/* åªåœ¨é‡‡æ ·å‰æ‰“å¼€åˆ†å‹æ£€æµ‹ç”µè·¯ï¼Œä¸‹ä¸€ï¿½? 100 ms ä»»åŠ¡å†è¯»å–ï¿½? */
 	BATEN_ON;
 	s_battery.measurement_pending = 1U;
 }
@@ -2887,7 +1967,7 @@ static void Ui_Countdown1s(void)
 		return;
 	}
 
-	/* ÏòÉÏÈ¡ÕûºóµÄÏÔÊ¾ÖµÖ»ÔÚÃëÊı¼õµ½ 0 Ê±±ä»¯¡£ */
+	/* å‘ä¸Šå–æ•´åçš„æ˜¾ç¤ºå€¼åªåœ¨ç§’æ•°å‡åˆ°0 æ—¶å˜åŒ– */
 	if (s_ui.remaining_seconds == 0U)
 	{
 		s_app.ui_dirty = 1U;
@@ -2908,7 +1988,7 @@ static void Input_Task10ms(void)
 
 static void Communication_Task10ms(void)
 {
-	/* TODO£º½âÎöÀ¶ÑÀ½ÓÊÕ»º´æ£¬²¢°ÑºÏ·¨ÃüÁî×ª»»ÎªÓë°´¼üÏàÍ¬µÄÊÂ¼ş¡£ */
+	/* TODOï¼šè§£æè“ç‰™æ¥æ”¶ç¼“å­˜ï¼Œå¹¶æŠŠåˆæ³•å‘½ä»¤è½¬æ¢ä¸ºä¸æŒ‰é”®ç›¸åŒçš„äº‹ä»¶ï¿½? */
 }
 
 static void AppEvent_Task10ms(void)
@@ -2929,8 +2009,8 @@ static void Control_Task10ms(void)
 	Ui_BuzzerTask10ms();
 
 	/*
-	 * UI Áªµ÷½×¶Î²»Çı¶¯Æø±Ã¡£³äÆø±£³Öµ½ÔÙ´ÎÇá°´»ò¿ØÖÆÄ£¿éÍ¨ÖªÍê³É£»
-	 * ·ÅÆøÍ¼±ê±£³Ö 2 Ãë£¬ºóĞøÓÉÆø·§¿ØÖÆÄ£¿éÌæ´úÕâ¶ÎÁÙÊ±Ê±Ğò¡£
+	 * UI è”è°ƒé˜¶æ®µä¸é©±åŠ¨æ°”æ³µã€‚å……æ°”ä¿æŒåˆ°å†æ¬¡è½»æŒ‰æˆ–æ§åˆ¶æ¨¡å—é€šçŸ¥å®Œæˆï¿½?
+	 * æ”¾æ°”å›¾æ ‡ä¿æŒ 2 ç§’ï¼Œåç»­ç”±æ°”é˜€æ§åˆ¶æ¨¡å—æ›¿ä»£è¿™æ®µä¸´æ—¶æ—¶åºï¿½?
 	 */
 	if ((s_app.state == APP_STATE_PRESSURE) &&
 	    (s_ui.pressure_action != PRESSURE_ACTION_IDLE) &&
@@ -2976,7 +2056,7 @@ static void Ui_Task50ms(void)
 static void Sensor_Task100ms(void)
 {
 	Battery_Task100ms();
-	/* TODO£ºÑ¹Á¦Ä£Ê½ÆôÓÃºó£¬ÔÚÕâÀïÔö¼ÓÑ¹Á¦ ADC µÄ·Ç×èÈû²ÉÑù¡£ */
+	/* TODOï¼šå‹åŠ›æ¨¡å¼å¯ç”¨åï¼Œåœ¨è¿™é‡Œå¢åŠ å‹åŠ› ADC çš„éé˜»å¡é‡‡æ ·ï¿½? */
 }
 
 static void Power_Task1000ms(void)
@@ -2992,7 +2072,7 @@ static void Power_Task1000ms(void)
 
 	Ui_Countdown1s();
 
-	/* TODO£ºµÍµçÁ¿¡¢×Ô¶¯¹Ø»úºÍÀ¶ÑÀĞÄÌøÔÚ¶ÔÓ¦Ä£¿éÍê³Éºó½ÓÈë¡£ */
+	/* TODOï¼šä½ç”µé‡ã€è‡ªåŠ¨å…³æœºå’Œè“ç‰™å¿ƒè·³åœ¨å¯¹åº”æ¨¡å—å®Œæˆåæ¥å…¥ */
 }
 
 int main(void)
@@ -3005,7 +2085,7 @@ int main(void)
 	{
 		App_RunOnce();
 
-		/* µÈ´ıÏÂÒ»´ÎÖĞ¶Ï£¬±ÜÃâ¿Õ×ªÕ¼Âú CPU¡£ */
+		/* ç­‰å¾…ä¸‹ä¸€æ¬¡ä¸­æ–­ï¼Œé¿å…ç©ºè½¬å æ»¡ CPU */
 		__WFI();
 	}
 }

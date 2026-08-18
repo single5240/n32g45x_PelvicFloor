@@ -38,20 +38,10 @@
 
 
 
-uint8_t Rx2_Data[20];
-
-//extern uint8_t Tx2_Data[20];
-uint8_t Buff_Size=0;
-extern uint8_t  BEL_SendData[10];
 extern uint8_t  BEL_ReadData[6];
 extern uint8_t  BEL_Flag;
 extern uint8_t  BEL_Beat_Flag;
 extern uint16_t BEL_Count;
-
-
-uint16_t Receive4_Time=0;
-
-uint16_t Receive3_Time=0;
 
 
 uint16_t ChA_DACValue=4090;
@@ -59,10 +49,7 @@ uint16_t ChB_DACValue=4090;
 
 
 uint8_t Receive2_Count=0;
-uint8_t Rx2_Count=0;
 uint8_t Receive2_Time=0;
-uint8_t Rx2_CheckSum=0;
-uint8_t Rx2_CheckSum16=0;
 
 extern uint8_t Key_Down_PB_MAIN;
 extern uint8_t Key_Up_PB_MAIN;
@@ -90,54 +77,37 @@ extern uint16_t Key_DownTime_PB_SS;
 extern uint16_t Key_UpTime_PB_SS;
 
 extern uint16_t Buzz_cnt;
-extern uint16_t Sleep_cnt;/// ĞİÃßÊ±³¤
-
 extern uint16_t Tim1_Count;
 extern uint16_t Tim8_Count;
 
-extern uint8_t Time_SetFlag;
-extern uint8_t Set_Minute;////¿ª»úÄ¬ÈÏ30·ÖÖÓ
-extern uint8_t Minute;////¿ª»úÄ¬ÈÏ30·ÖÖÓ
+extern uint8_t Set_Minute;////å¼€æœºé»˜è®¤30åˆ†é’Ÿ
+extern uint8_t Minute;////å¼€æœºé»˜è®¤30åˆ†é’Ÿ
 extern uint8_t Second;
-extern uint8_t Pwr_Flag;////ÉÏµç±êÖ¾Î»
-extern uint8_t Ch_Flag;////Í¨µÀ±êÖ¾Î»0:1Í¨µÀ£¬1£º2Í¨µÀ
-extern uint8_t Formula;/////´¦·½0£¬1,2
-extern uint8_t WorkType;////0:ÖÎÁÆÄ£Ê½£¬1£º¼ì²âÄ£Ê½
-extern uint8_t Pwr1;/////0-60µµÇ¿¶È
+extern uint8_t Ch_Flag;////é€šé“æ ‡å¿—ä½0:1é€šé“ï¼Œ1ï¼š2é€šé“
+extern uint8_t Formula;/////å¤„æ–¹0ï¼Œ1,2
+extern uint8_t WorkType;////0:æ²»ç–—æ¨¡å¼ï¼Œ1ï¼šæ£€æµ‹æ¨¡å¼
+extern uint8_t Pwr1;/////0-60æ¡£å¼ºåº¦
 extern uint8_t Pwr2;
 
-extern uint8_t Adc_Flag;
 extern uint8_t Flash_Flag;
 
 extern uint8_t Charg_Flag;
 extern uint8_t Chargok_Flag;
 
-extern uint8_t AIRIN_Logo;///³äÆøÍ¼±ê
-extern uint8_t CH1_Logo;////1Í¨µÀÍ¼±ê
-extern uint8_t FORM_Logo;////Ä£Ê½Í¼±ê
-extern uint8_t CH2_Logo;////2Í¨µÀÍ¼±ê
+extern uint8_t AIRIN_Logo;///å……æ°”å›¾æ ‡
+extern uint8_t CH1_Logo;////1é€šé“å›¾æ ‡
+extern uint8_t FORM_Logo;////æ¨¡å¼å›¾æ ‡
+extern uint8_t CH2_Logo;////2é€šé“å›¾æ ‡
 
-extern uint8_t PRESS_Logo;///Ñ¹Á¦ÖµÍ¼±ê
-extern uint8_t AIROUT_Logo;///·ÅÆøÍ¼±ê
-extern uint8_t MMHG_Logo;///mmHgÍ¼±ê
-extern uint8_t BLE_Logo;////À¶ÑÀÍ¼±ê
-extern uint8_t TIM_Logo;///Ê±¼äÍ¼±ê
+extern uint8_t PRESS_Logo;///å‹åŠ›å€¼å›¾æ ‡
+extern uint8_t AIROUT_Logo;///æ”¾æ°”å›¾æ ‡
+extern uint8_t MMHG_Logo;///mmHgå›¾æ ‡
+extern uint8_t TIM_Logo;///æ—¶é—´å›¾æ ‡
 
-extern uint8_t Press_Value1;////Ñ¹Á¦¸öÎ»ÊıÍ¼±ê
-extern uint8_t Press_Value10;////Ñ¹Á¦Ê®Î»ÊıÍ¼±ê
-extern uint8_t Press_Value100;////Ñ¹Á¦°ÙÎ»ÊıÍ¼±ê
-
-
-extern uint8_t Pwr1_1;////1Í¨µÀÇ¿¶È¸öÎ»ÊıÍ¼±ê
-extern uint8_t Pwr1_10;////1Í¨µÀÇ¿¶ÈÊ®Î»ÊıÍ¼±ê
-
-extern uint8_t Pwr2_1;////2Í¨µÀÇ¿¶È¸öÎ»ÊıÍ¼±ê
-extern uint8_t Pwr2_10;////2Í¨µÀÇ¿¶ÈÊ®Î»ÊıÍ¼±ê
-
-extern uint8_t Bat_Value0;////µç³ØµçÁ¿ÏÔÊ¾Öµ
-extern uint8_t Bat_Value1;////µç³ØµçÁ¿ÏÔÊ¾Öµ
-extern uint8_t Bat_Value2;////µç³ØµçÁ¿ÏÔÊ¾Öµ
-extern uint8_t Bat_Value3;////µç³ØµçÁ¿ÏÔÊ¾Öµ
+extern uint8_t Bat_Value0;////ç”µæ± ç”µé‡æ˜¾ç¤ºå€¼
+extern uint8_t Bat_Value1;////ç”µæ± ç”µé‡æ˜¾ç¤ºå€¼
+extern uint8_t Bat_Value2;////ç”µæ± ç”µé‡æ˜¾ç¤ºå€¼
+extern uint8_t Bat_Value3;////ç”µæ± ç”µé‡æ˜¾ç¤ºå€¼
 
 extern uint16_t Bl_Cnt;
 
@@ -155,7 +125,6 @@ uint8_t TriWave_SelectA1=0;
 uint8_t TriWave_SelectA2=0;
 uint8_t TraWave_SelectA1=0;
 uint8_t TraWave_SelectA2=0;
-uint8_t IdxWave_SelectA=1;
 
 
 uint8_t LenWave_CountA=60;
@@ -172,89 +141,29 @@ uint8_t TriWave_SelectB1=0;
 uint8_t TriWave_SelectB2=0;
 uint8_t TraWave_SelectB1=1;
 uint8_t TraWave_SelectB2=1;
-uint8_t IdxWave_SelectB=1;
 
 uint32_t 	E1_Step=0;
 uint32_t 	E2_Step=0;
 
-uint16_t  WAVE_RANGE;
-uint16_t  wave_range;
-uint16_t	Wave_StepA;
-
-uint16_t	Start_PowerA;
-uint16_t	Start_PowerB;
-
 uint16_t	Pwr2_ADCValue;
-uint16_t 	CHSIZE=500;
-
-uint16_t	SinWaveA_ADCValue;
-uint16_t	SinWaveB_ADCValue;
 
 uint16_t	Pwr1_ADCValue;
-uint32_t 	E1_Length=0;
-
-uint16_t 	E1_ProfileA=400;
-uint16_t 	E1_ProfileB=400;
-
-uint16_t 	E1_Keep_Power=0;
-uint16_t 	E2_Keep_Power=0;
 uint16_t 	E1_Power=0;
 uint16_t 	E2_Power=0;
 
 uint8_t		Key_SelectA=3;
-uint8_t		Key_SelectB=0;
 uint8_t		Time_Flag=0;
 uint8_t		Ico_Flag=0;
 uint16_t	Ico_Cnt=0;
 
 
-uint16_t ChangeData_A1[17];
-uint16_t ChangeData_A2[8];
-
-uint16_t ChangeData_B1[17];
-uint16_t ChangeData_B2[8];
-
 extern uint16_t Moto_Count;
-extern uint16_t MotoFirst_Flag;//Ê×´Î³äÆø±êÖ¾Î»
-extern uint16_t MotoRun_Cnt;//µç»úÆô¶¯±êÖ¾Î»
-extern uint16_t MotoStop_Cnt;//µç´Å·§¿ªÆô±êÖ¾Î»
-extern uint16_t Press_Value;//Ñ¹Á¦Öµ
-extern uint16_t Start_PressureADC;
+extern uint16_t MotoFirst_Flag;//é¦–æ¬¡å……æ°”æ ‡å¿—ä½
+extern uint16_t MotoRun_Cnt;//ç”µæœºå¯åŠ¨æ ‡å¿—ä½
+extern uint16_t MotoStop_Cnt;//ç”µç£é˜€å¼€å¯æ ‡å¿—ä½
+extern uint16_t Press_Value;//å‹åŠ›å€¼
 extern uint8_t	Ico_Formula;
 extern uint8_t  Moto_StateFlag;
-
-extern uint16_t RunA_NumS;
-extern uint16_t RunA_NumM;
-extern uint16_t RunA_NumL;
-extern uint16_t RunA_NumX;
-extern uint16_t RunA_i;
-extern uint16_t RunA_j;
-extern uint16_t RunA_m;
-extern uint16_t RunA_n;
-extern uint16_t RunWaveA_Count;
-
-extern uint16_t RunB_NumS;
-extern uint16_t RunB_NumM;
-extern uint16_t RunB_NumL;
-extern uint16_t RunB_NumX;
-extern uint16_t RunB_i;
-extern uint16_t RunB_j;
-extern uint16_t RunB_m;
-extern uint16_t RunB_n;
-extern uint16_t RunWaveB_Count;
-
-extern uint16_t Wave_ChangeA;
-extern uint16_t Wave_ChangeB;
-
-extern uint16_t RunModeA_Count[8][4];
-extern uint16_t	RunModeA_Hz[14][3];
-extern uint16_t	RunModeA_Cycle[16][2];
-extern uint16_t	RunModeA_Step[14][3];
-
-extern uint16_t RunModeB_Count[8][4];
-extern uint16_t	RunModeB_Hz[14][3];
-extern uint16_t	RunModeB_Cycle[16][2];
-extern uint16_t	RunModeB_Step[14][3];
 
 /****************************************************************************/
 
@@ -353,35 +262,34 @@ void SysTick_Handler(void)
 /*void PPP_IRQHandler(void)
 {
 }*/
-uint8_t RAED_DATA;
 uint8_t checksum = 0;
 void USART2_IRQHandler(void)
 {
     if (USART_GetIntStatus(USART2, USART_INT_RXDNE) != RESET) 
     {
-        /*·ÀÖ¹Êı¾İÒç³ö*/
+        /*é˜²æ­¢æ•°æ®æº¢å‡º*/
         if(Receive2_Count >= MAX_BUFFER_SIZE) {
-            Receive2_Count = 0; // Òç³öÊ±ÖØÖÃ
+            Receive2_Count = 0; // æº¢å‡ºæ—¶é‡ç½®
         }
 
-        /*¶ÁÈ¡Êı¾İ*/
+        /*è¯»å–æ•°æ®*/
         BEL_ReadData[Receive2_Count++] = USART_ReceiveData(USART2);
         Receive2_Time=0;
         if(BEL_ReadData[0]!=0x5a)
         {
             Receive2_Count=0;
         }      
-        /*¼ì²éÖ¡Í·*/
+        /*æ£€æŸ¥å¸§å¤´*/
         if(Receive2_Count >= 6 && BEL_ReadData[0]==0x5a && BEL_ReadData[1]==0xa5) 
         {
 
 								checksum = BLE_Checksum(BEL_ReadData, Receive2_Count );
-                /*Ğ£ÑéÖ¡Êı¾İ*/
+                /*æ ¡éªŒå¸§æ•°æ®*/
                 if(BEL_ReadData[Receive2_Count-1] == checksum) 
                 {
                     BEL_Flag = 1;
                 }
-                Receive2_Count = 0; /*´¦ÀíÍê³ÉÖØÖÃ»º³åÇø*/
+                Receive2_Count = 0; /*å¤„ç†å®Œæˆé‡ç½®ç¼“å†²åŒº*/
 
         }
     }
@@ -401,11 +309,11 @@ void TIM1_UP_IRQHandler(void)
 						E1_Step++;
 						switch(Wave_SelectA)
 						{
-							case 0:/*³¤ÖÜÆÚÌİĞÎ²¨***************************************************************************************/
+							case 0:/*é•¿å‘¨æœŸæ¢¯å½¢æ³¢***************************************************************************************/
 										E1_Power=Pwr1*Set_Value;
 										switch(TraWave_SelectA1)
 										{
-											case 0:	/*ÉÏÉı¶Î100ms*/											
+											case 0:	/*ä¸Šå‡æ®µ100ms*/
 												if(E1_Step<200)
 												{
 													Pwr1_ADCValue=(E1_Power*E1_Step)/200;
@@ -414,7 +322,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA1=1;
 												}
 												break;
-											case 1:/*Î¬³Ö¶Î200ms*/
+											case 1:/*ç»´æŒæ®µ200ms*/
 												if(E1_Step<600)
 												{
 													Pwr1_ADCValue=E1_Power;
@@ -423,7 +331,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA1=2;
 												}												
 												break;
-											case 2:/*ÏÂ½µ¶Î100ms*/
+											case 2:/*ä¸‹é™æ®µ100ms*/
 												if(E1_Step<800)
 												{
 													Pwr1_ADCValue=(E1_Power*(800-E1_Step))/200;
@@ -432,7 +340,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA1=3;
 												}
 												break;
-											case 3:/*¿ÕÏĞ¶Î400ms*/
+											case 3:/*ç©ºé—²æ®µ400ms*/
 												if(E1_Step<1600)
 												{
 													Pwr1_ADCValue=0;
@@ -441,7 +349,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA1=4;
 												}												
 												break;
-											case 4:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 4:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E1_Step=0;
 												TraWave_SelectA1=0;
 												Pwr1_ADCValue=0;
@@ -456,11 +364,11 @@ void TIM1_UP_IRQHandler(void)
 												break;
 										}
 									break;
-							case 1:/*³¤ÖÜÆÚÀâĞÎ²¨***************************************************************************************/
+							case 1:/*é•¿å‘¨æœŸæ£±å½¢æ³¢***************************************************************************************/
 										E1_Power=Pwr1*Set_Value;
 										switch(LenWave_SelectA1)
 										{
-											case 0:/*ÉÏÉı¶Î400ms*/
+											case 0:/*ä¸Šå‡æ®µ400ms*/
 												if(E1_Step<800)
 												{
 													Pwr1_ADCValue=(E1_Power*E1_Step)/800;
@@ -469,7 +377,7 @@ void TIM1_UP_IRQHandler(void)
 													LenWave_SelectA1=1;
 												}
 												break;
-											case 1:/*ÏÂ½µ¶Î400ms*/
+											case 1:/*ä¸‹é™æ®µ400ms*/
 												if(E1_Step<1600)
 												{
 													Pwr1_ADCValue=(E1_Power*(1600-E1_Step))/800;
@@ -478,7 +386,7 @@ void TIM1_UP_IRQHandler(void)
 													LenWave_SelectA1=2;
 												}												
 												break;
-											case 2:/*¿ÕÏĞ¶Î500ms*/
+											case 2:/*ç©ºé—²æ®µ500ms*/
 												if(E1_Step<2600)
 												{
 													Pwr1_ADCValue=0;
@@ -487,7 +395,7 @@ void TIM1_UP_IRQHandler(void)
 													LenWave_SelectA1=3;
 												}
 												break;	
-											case 3:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 3:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E1_Step=0;
 												LenWave_SelectA1=0;
 												Pwr1_ADCValue=0;
@@ -502,11 +410,11 @@ void TIM1_UP_IRQHandler(void)
 												break;
 										}
 									break;
-							case 2:/*³¤ÖÜÆÚÈı½Ç²¨***************************************************************************************/
+							case 2:/*é•¿å‘¨æœŸä¸‰è§’æ³¢***************************************************************************************/
 										E1_Power=Pwr1*Set_Value;
 										switch(TriWave_SelectA1)
 										{
-											case 0:/*ÉÏÉı¶Î1600ms*/
+											case 0:/*ä¸Šå‡æ®µ1600ms*/
 												if(E1_Step<3200)
 												{
 													Pwr1_ADCValue=(E1_Power*E1_Step)/3200;
@@ -516,7 +424,7 @@ void TIM1_UP_IRQHandler(void)
 													TriWave_SelectA1=1;
 												}
 												break;
-											case 1:/*¿ÕÏĞ¶Î2000ms*/
+											case 1:/*ç©ºé—²æ®µ2000ms*/
 												if(E1_Step<7200)
 												{
 													Pwr1_ADCValue=0;
@@ -526,7 +434,7 @@ void TIM1_UP_IRQHandler(void)
 													TriWave_SelectA1=2;
 												}
 												break;
-											case 2:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 2:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E1_Step=0;
 												TriWave_SelectA1=0;
 												TriWave_CountA--;
@@ -540,11 +448,11 @@ void TIM1_UP_IRQHandler(void)
 												break;
 										}
 									break;
-							case 3:/*¶ÌÖÜÆÚÌİĞÎ²¨***************************************************************************************/
+							case 3:/*çŸ­å‘¨æœŸæ¢¯å½¢æ³¢***************************************************************************************/
 										E1_Power=Pwr1*Set_Value;
 										switch(TraWave_SelectA2)
 										{
-											case 0:/*ÉÏÉı¶Î50ms*/												
+											case 0:/*ä¸Šå‡æ®µ50ms*/
 												if(E1_Step<100)
 												{
 													Pwr1_ADCValue=(E1_Power*E1_Step)/100;
@@ -553,7 +461,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA2=1;
 												}
 												break;
-											case 1:/*Î¬³Ö¶Î200ms*/
+											case 1:/*ç»´æŒæ®µ200ms*/
 												if(E1_Step<500)
 												{
 													Pwr1_ADCValue=E1_Power;
@@ -562,7 +470,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA2=2;
 												}												
 												break;
-											case 2:/*ÏÂ½µ¶Î50ms*/
+											case 2:/*ä¸‹é™æ®µ50ms*/
 												if(E1_Step<600)
 												{
 													Pwr1_ADCValue=(E1_Power*(600-E1_Step))/100;
@@ -571,7 +479,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA2=3;
 												}
 												break;
-											case 3:/*¿ÕÏĞ¶Î300ms*/
+											case 3:/*ç©ºé—²æ®µ300ms*/
 												if(E1_Step<1200)
 												{
 													Pwr1_ADCValue=0;
@@ -580,7 +488,7 @@ void TIM1_UP_IRQHandler(void)
 													TraWave_SelectA2=4;
 												}												
 												break;
-											case 4:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 4:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E1_Step=0;
 												TraWave_SelectA2=0;
 												Pwr1_ADCValue=0;
@@ -595,11 +503,11 @@ void TIM1_UP_IRQHandler(void)
 												break;
 										}
 									break;
-								case 4:/*¶ÌÖÜÆÚÀâĞÎ²¨***************************************************************************************/
+								case 4:/*çŸ­å‘¨æœŸæ£±å½¢æ³¢***************************************************************************************/
 										E1_Power=Pwr1*Set_Value;
 										switch(LenWave_SelectA2)
 										{
-											case 0:/*ÉÏÉı¶Î200ms*/
+											case 0:/*ä¸Šå‡æ®µ200ms*/
 												if(E1_Step<400)
 												{
 													Pwr1_ADCValue=(E1_Power*E1_Step)/400;
@@ -608,7 +516,7 @@ void TIM1_UP_IRQHandler(void)
 													LenWave_SelectA2=1;
 												}
 												break;
-											case 1:/*ÏÂ½µ¶Î200ms*/
+											case 1:/*ä¸‹é™æ®µ200ms*/
 												if(E1_Step<800)
 												{
 													Pwr1_ADCValue=(E1_Power*(800-E1_Step))/400;
@@ -617,7 +525,7 @@ void TIM1_UP_IRQHandler(void)
 													LenWave_SelectA2=2;
 												}												
 												break;
-											case 2:/*¿ÕÏĞ¶Î500ms*/
+											case 2:/*ç©ºé—²æ®µ500ms*/
 												if(E1_Step<1800)
 												{
 													Pwr1_ADCValue=0;
@@ -627,7 +535,7 @@ void TIM1_UP_IRQHandler(void)
 													LenWave_SelectA2=3;
 												}
 												break;	
-											case 3:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 3:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E1_Step=0;
 												LenWave_SelectA2=0;
 												Pwr1_ADCValue=0;
@@ -642,11 +550,11 @@ void TIM1_UP_IRQHandler(void)
 												break;
 										}
 									break;
-								case 5:/*¶ÌÖÜÆÚÈı½Ç²¨***************************************************************************************/
+								case 5:/*çŸ­å‘¨æœŸä¸‰è§’æ³¢***************************************************************************************/
 										E1_Power=Pwr1*Set_Value;
 										switch(TriWave_SelectA2)
 										{
-											case 0:/*ÉÏÉı¶Î800ms*/
+											case 0:/*ä¸Šå‡æ®µ800ms*/
 												if(E1_Step<1600)
 												{
 													Pwr1_ADCValue=(E1_Power*E1_Step)/1600;
@@ -656,7 +564,7 @@ void TIM1_UP_IRQHandler(void)
 													TriWave_SelectA2=1;
 												}
 												break;
-											case 1:/*¿ÕÏĞ¶Î1000ms*/
+											case 1:/*ç©ºé—²æ®µ1000ms*/
 												if(E1_Step<3600)
 												{
 													Pwr1_ADCValue=0;
@@ -666,7 +574,7 @@ void TIM1_UP_IRQHandler(void)
 													TriWave_SelectA2=2;
 												}
 												break;
-											case 2:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 2:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E1_Step=0;
 												TriWave_SelectA2=0;
 												TriWave_CountA--;
@@ -724,11 +632,11 @@ void TIM8_UP_IRQHandler(void)
 						E2_Step++;
 						switch(Wave_SelectB)
 						{
-							case 0:/*³¤ÖÜÆÚÌİĞÎ²¨***************************************************************************************/
+							case 0:/*é•¿å‘¨æœŸæ¢¯å½¢æ³¢***************************************************************************************/
 										E2_Power=Pwr2*Set_Value;
 										switch(TraWave_SelectB1)
 										{
-											case 0:	/*ÉÏÉı¶Î100ms*/											
+											case 0:	/*ä¸Šå‡æ®µ100ms*/
 												if(E2_Step<200)
 												{
 													Pwr2_ADCValue=(E2_Power*E2_Step)/200;
@@ -737,7 +645,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB1=1;
 												}
 												break;
-											case 1:/*Î¬³Ö¶Î200ms*/
+											case 1:/*ç»´æŒæ®µ200ms*/
 												if(E2_Step<600)
 												{
 													Pwr2_ADCValue=E2_Power;
@@ -746,7 +654,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB1=2;
 												}												
 												break;
-											case 2:/*ÏÂ½µ¶Î100ms*/
+											case 2:/*ä¸‹é™æ®µ100ms*/
 												if(E2_Step<800)
 												{
 													Pwr2_ADCValue=(E2_Power*(800-E2_Step))/200;
@@ -755,7 +663,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB1=3;
 												}
 												break;
-											case 3:/*¿ÕÏĞ¶Î400ms*/
+											case 3:/*ç©ºé—²æ®µ400ms*/
 												if(E2_Step<1600)
 												{
 													Pwr2_ADCValue=0;
@@ -764,7 +672,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB1=4;
 												}												
 												break;
-											case 4:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 4:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E2_Step=0;
 												TraWave_SelectB1=0;
 												Pwr2_ADCValue=0;
@@ -779,11 +687,11 @@ void TIM8_UP_IRQHandler(void)
 												break;
 										}
 									break;
-							case 1:/*³¤ÖÜÆÚÀâĞÎ²¨***************************************************************************************/
+							case 1:/*é•¿å‘¨æœŸæ£±å½¢æ³¢***************************************************************************************/
 										E2_Power=Pwr2*Set_Value;
 										switch(LenWave_SelectB1)
 										{
-											case 0:/*ÉÏÉı¶Î400ms*/
+											case 0:/*ä¸Šå‡æ®µ400ms*/
 												if(E2_Step<800)
 												{
 													Pwr2_ADCValue=(E2_Power*E2_Step)/800;
@@ -792,7 +700,7 @@ void TIM8_UP_IRQHandler(void)
 													LenWave_SelectB1=1;
 												}
 												break;
-											case 1:/*ÏÂ½µ¶Î400ms*/
+											case 1:/*ä¸‹é™æ®µ400ms*/
 												if(E2_Step<1600)
 												{
 													Pwr2_ADCValue=(E2_Power*(1600-E2_Step))/800;
@@ -801,7 +709,7 @@ void TIM8_UP_IRQHandler(void)
 													LenWave_SelectB1=2;
 												}												
 												break;
-											case 2:/*¿ÕÏĞ¶Î500ms*/
+											case 2:/*ç©ºé—²æ®µ500ms*/
 												if(E2_Step<2600)
 												{
 													Pwr2_ADCValue=0;
@@ -810,7 +718,7 @@ void TIM8_UP_IRQHandler(void)
 													LenWave_SelectB1=3;
 												}
 												break;	
-											case 3:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 3:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E2_Step=0;
 												LenWave_SelectB1=0;
 												Pwr2_ADCValue=0;
@@ -825,11 +733,11 @@ void TIM8_UP_IRQHandler(void)
 												break;
 										}
 									break;
-							case 2:/*³¤ÖÜÆÚÈı½Ç²¨***************************************************************************************/
+							case 2:/*é•¿å‘¨æœŸä¸‰è§’æ³¢***************************************************************************************/
 										E2_Power=Pwr2*Set_Value;
 										switch(TriWave_SelectB1)
 										{
-											case 0:/*ÉÏÉı¶Î1600ms*/
+											case 0:/*ä¸Šå‡æ®µ1600ms*/
 												if(E2_Step<3200)
 												{
 													Pwr2_ADCValue=(E2_Power*E2_Step)/3200;
@@ -839,7 +747,7 @@ void TIM8_UP_IRQHandler(void)
 													TriWave_SelectB1=1;
 												}
 												break;
-											case 1:/*¿ÕÏĞ¶Î2000ms*/
+											case 1:/*ç©ºé—²æ®µ2000ms*/
 												if(E2_Step<7200)
 												{
 													Pwr2_ADCValue=0;
@@ -849,7 +757,7 @@ void TIM8_UP_IRQHandler(void)
 													TriWave_SelectB1=2;
 												}
 												break;
-											case 2:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 2:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E2_Step=0;
 												TriWave_SelectB1=0;
 												TriWave_CountB--;
@@ -863,11 +771,11 @@ void TIM8_UP_IRQHandler(void)
 												break;
 										}
 									break;
-							case 3:/*¶ÌÖÜÆÚÌİĞÎ²¨***************************************************************************************/
+							case 3:/*çŸ­å‘¨æœŸæ¢¯å½¢æ³¢***************************************************************************************/
 										E2_Power=Pwr2*Set_Value;
 										switch(TraWave_SelectB2)
 										{
-											case 0:/*ÉÏÉı¶Î50ms*/												
+											case 0:/*ä¸Šå‡æ®µ50ms*/
 												if(E2_Step<100)
 												{
 													Pwr2_ADCValue=(E2_Power*E2_Step)/100;
@@ -876,7 +784,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB2=1;
 												}
 												break;
-											case 1:/*Î¬³Ö¶Î200ms*/
+											case 1:/*ç»´æŒæ®µ200ms*/
 												if(E2_Step<500)
 												{
 													Pwr2_ADCValue=E2_Power;
@@ -885,7 +793,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB2=2;
 												}												
 												break;
-											case 2:/*ÏÂ½µ¶Î50ms*/
+											case 2:/*ä¸‹é™æ®µ50ms*/
 												if(E2_Step<600)
 												{
 													Pwr2_ADCValue=(E2_Power*(600-E2_Step))/100;
@@ -894,7 +802,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB2=3;
 												}
 												break;
-											case 3:/*¿ÕÏĞ¶Î300ms*/
+											case 3:/*ç©ºé—²æ®µ300ms*/
 												if(E2_Step<1200)
 												{
 													Pwr2_ADCValue=0;
@@ -903,7 +811,7 @@ void TIM8_UP_IRQHandler(void)
 													TraWave_SelectB2=4;
 												}												
 												break;
-											case 4:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 4:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E2_Step=0;
 												TraWave_SelectB2=0;
 												Pwr2_ADCValue=0;
@@ -918,11 +826,11 @@ void TIM8_UP_IRQHandler(void)
 												break;
 										}
 									break;
-								case 4:/*¶ÌÖÜÆÚÀâĞÎ²¨***************************************************************************************/
+								case 4:/*çŸ­å‘¨æœŸæ£±å½¢æ³¢***************************************************************************************/
 										E2_Power=Pwr2*Set_Value;
 										switch(LenWave_SelectB2)
 										{
-											case 0:/*ÉÏÉı¶Î200ms*/
+											case 0:/*ä¸Šå‡æ®µ200ms*/
 												if(E2_Step<400)
 												{
 													Pwr2_ADCValue=(E2_Power*E1_Step)/400;
@@ -931,7 +839,7 @@ void TIM8_UP_IRQHandler(void)
 													LenWave_SelectB2=1;
 												}
 												break;
-											case 1:/*ÏÂ½µ¶Î200ms*/
+											case 1:/*ä¸‹é™æ®µ200ms*/
 												if(E2_Step<800)
 												{
 													Pwr2_ADCValue=(E2_Power*(800-E2_Step))/400;
@@ -940,7 +848,7 @@ void TIM8_UP_IRQHandler(void)
 													LenWave_SelectB2=2;
 												}												
 												break;
-											case 2:/*¿ÕÏĞ¶Î500ms*/
+											case 2:/*ç©ºé—²æ®µ500ms*/
 												if(E2_Step<1800)
 												{
 													Pwr2_ADCValue=0;
@@ -949,7 +857,7 @@ void TIM8_UP_IRQHandler(void)
 													LenWave_SelectB2=3;
 												}
 												break;	
-											case 3:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 3:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E2_Step=0;
 												LenWave_SelectB2=0;
 												Pwr2_ADCValue=0;
@@ -964,11 +872,11 @@ void TIM8_UP_IRQHandler(void)
 												break;
 										}
 									break;
-								case 5:/*¶ÌÖÜÆÚÈı½Ç²¨***************************************************************************************/
+								case 5:/*çŸ­å‘¨æœŸä¸‰è§’æ³¢***************************************************************************************/
 										E2_Power=Pwr2*Set_Value;
 										switch(TriWave_SelectB2)
 										{
-											case 0:/*ÉÏÉı¶Î800ms*/
+											case 0:/*ä¸Šå‡æ®µ800ms*/
 												if(E2_Step<1600)
 												{
 													Pwr2_ADCValue=(E2_Power*E2_Step)/1600;
@@ -978,7 +886,7 @@ void TIM8_UP_IRQHandler(void)
 													TriWave_SelectB2=1;
 												}
 												break;
-											case 1:/*¿ÕÏĞ¶Î1000ms*/
+											case 1:/*ç©ºé—²æ®µ1000ms*/
 												if(E1_Step<3600)
 												{
 													Pwr2_ADCValue=0;
@@ -988,7 +896,7 @@ void TIM8_UP_IRQHandler(void)
 													TriWave_SelectB2=2;
 												}
 												break;
-											case 2:/*Ò»ÂÖÖÜÆÚ½áÊøÖØÖÃ²ÎÊı*/
+											case 2:/*ä¸€è½®å‘¨æœŸç»“æŸé‡ç½®å‚æ•°*/
 												E2_Step=0;
 												TriWave_SelectB2=0;
 												TriWave_CountB--;
@@ -1038,7 +946,7 @@ void TIM8_UP_IRQHandler(void)
 /**
  * @brief  This function handles TIM3 global interrupt request.
  */
-void TIM2_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
+void TIM2_IRQHandler(void)///ä½œä¸ºé€šç”¨å®šæ—¶å™¨ä½¿ç”¨
 {
     
     if (TIM_GetIntStatus(TIM2, TIM_INT_UPDATE) != RESET)
@@ -1047,7 +955,7 @@ void TIM2_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 
         if(Receive2_Time<11)
             Receive2_Time++;///10ms
-        if(Receive2_Time==10)///³¬¹ı20MS»¹Ã»ÓĞÊÕµ½ÏÂ¸ö´®¿ÚĞÅºÅ
+        if(Receive2_Time==10)///è¶…è¿‡20MSè¿˜æ²¡æœ‰æ”¶åˆ°ä¸‹ä¸ªä¸²å£ä¿¡å·
         {
             memset(BEL_ReadData,0,Receive2_Count);
             Receive2_Count=0;
@@ -1059,7 +967,7 @@ void TIM2_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 		/**
  * @brief  This function handles TIM3 global interrupt request.
  */
-void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
+void TIM5_IRQHandler(void)///ä½œä¸ºé€šç”¨å®šæ—¶å™¨ä½¿ç”¨
 {
 		static uint16_t hh,kk,jj;
     if (TIM_GetIntStatus(TIM5, TIM_INT_UPDATE) != RESET)
@@ -1068,9 +976,8 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 
         if(Receive2_Time<11)
             Receive2_Time++;///10ms
-        if(Receive2_Time==10)///³¬¹ı10MS»¹Ã»ÓĞÊÕµ½ÏÂ¸ö´®¿ÚĞÅºÅ
+        if(Receive2_Time==10)///è¶…è¿‡10MSè¿˜æ²¡æœ‰æ”¶åˆ°ä¸‹ä¸ªä¸²å£ä¿¡å·
         {
-            memset(Rx2_Data,0,Receive2_Count);
             Receive2_Count=0;
         }
 				if (Key_Down_PB_MAIN== 1)
@@ -1239,22 +1146,21 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 				if(jj>=300)
 				{
 					jj=0;
-					Adc_Flag=1;///¼ì²âÒ»´Îµç³ØµçÁ¿
-					Flash_Flag=!Flash_Flag;////Í¼±êÉÁË¸
+					Flash_Flag=!Flash_Flag;////å›¾æ ‡é—ªçƒ
 
 				}
-				if(Buzz_cnt)////·äÃùÆ÷Ïì
+				if(Buzz_cnt)////èœ‚é¸£å™¨å“
 				{
-					TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_ENABLE);////´ò¿ª·äÃùÆ÷
+					TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_ENABLE);////æ‰“å¼€èœ‚é¸£å™¨
 					Buzz_cnt--;
 					if(Buzz_cnt==0)
-						TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);////¹Ø±Õ·äÃùÆ÷
+						TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);////å…³é—­èœ‚é¸£å™¨
 				}
-				if(MotoStop_Cnt)/*¿ªÆôµç´Å·§²Ù×÷*/
+				if(MotoStop_Cnt)/*å¼€å¯ç”µç£é˜€æ“ä½œ*/
 				{					
 					MotoStop_Cnt--;
 					SWEN_ON;
-					if(MotoStop_Cnt==0)/*·ÅÆøÍê³Éºó¹Ø±Õµç´Å·§£¬Èç¹û³£¿ª»á·¢ÈÈ*/
+					if(MotoStop_Cnt==0)/*æ”¾æ°”å®Œæˆåå…³é—­ç”µç£é˜€ï¼Œå¦‚æœå¸¸å¼€ä¼šå‘çƒ­*/
 					{            
 						SWEN_OFF;
 						Key_SelectA=3;
@@ -1262,22 +1168,22 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 					}
 				}
 				
-				if(MotoRun_Cnt)/*µç»úÆô¶¯*/
+				if(MotoRun_Cnt)/*ç”µæœºå¯åŠ¨*/
 				{
           Mode_Change = 1;
 					Moto_Count++;
 					if(Moto_Count<300)
 					{
-						TIM_SetCmp4(TIM4,800);/*µ±Ç°PWMÕ¼¿Õ±ÈÎª10%*/
+						TIM_SetCmp4(TIM4,800);/*å½“å‰PWMå ç©ºæ¯”ä¸º10%*/
 					}
 					else
 					{
 						if(Moto_Count>499)
 						{
 								Moto_Count=0;
-							if(MotoFirst_Flag)/*µÚÒ»´Î³äÆøÊ±ĞèÁ¬Ğø³äÆøÖµ70mmHg×óÓÒ²ÅÍ£Ö¹*/
+							if(MotoFirst_Flag)/*ç¬¬ä¸€æ¬¡å……æ°”æ—¶éœ€è¿ç»­å……æ°”å€¼70mmHgå·¦å³æ‰åœæ­¢*/
 							{
-								if(Press_Value>700)/*µ½´ïÉè¶¨Ñ¹Á¦ºóÍ£Ö¹³äÆø*/
+								if(Press_Value>700)/*åˆ°è¾¾è®¾å®šå‹åŠ›ååœæ­¢å……æ°”*/
 								{
 									MotoRun_Cnt=0;
 									Key_SelectA=3;
@@ -1286,7 +1192,7 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 							}
 							else
 							{
-								MotoRun_Cnt=0;/*ºóĞø¸ù¾İ°´¼ü½øĞĞ³äÆøÃ¿´ÎÔ¼10mmHg*/
+								MotoRun_Cnt=0;/*åç»­æ ¹æ®æŒ‰é”®è¿›è¡Œå……æ°”æ¯æ¬¡çº¦10mmHg*/
                 Key_SelectA=3;
 							}
 						}
@@ -1308,25 +1214,25 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 						switch(kk)
 						{
 							case 0:
-								Bat_Value0=0x10;////µç³ØµçÁ¿ÏÔÊ¾¿Õ
+								Bat_Value0=0x10;////ç”µæ± ç”µé‡æ˜¾ç¤ºç©º
 								Bat_Value1=0;//
 								Bat_Value2=0;///
 								Bat_Value3=0;///
 								break;
 							case 1:
-								Bat_Value0=0x10;////µç³ØµçÁ¿ÏÔÊ¾Ò»¸ñ
+								Bat_Value0=0x10;////ç”µæ± ç”µé‡æ˜¾ç¤ºä¸€æ ¼
 								Bat_Value1=0x80;//
 								Bat_Value2=0;///
 								Bat_Value3=0;///
 								break;
 							case 2:
-								Bat_Value0=0x10;////µç³ØµçÁ¿ÏÔÊ¾Á½¸ñ
+								Bat_Value0=0x10;////ç”µæ± ç”µé‡æ˜¾ç¤ºä¸¤æ ¼
 								Bat_Value1=0x80;//
 								Bat_Value2=0x40;///
 								Bat_Value3=0;///
 								break;
 							case 3:
-								Bat_Value0=0x10;////µç³ØµçÁ¿ÏÔÊ¾Âú¸ñ
+								Bat_Value0=0x10;////ç”µæ± ç”µé‡æ˜¾ç¤ºæ»¡æ ¼
 								Bat_Value1=0x80;//
 								Bat_Value2=0x40;///
 								Bat_Value3=0x20;///
@@ -1337,12 +1243,12 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 					}
 					else if(Chargok_Flag)
 					{
-						Bat_Value0=0x10;////µç³ØµçÁ¿ÏÔÊ¾Âúµç
+						Bat_Value0=0x10;////ç”µæ± ç”µé‡æ˜¾ç¤ºæ»¡ç”µ
 						Bat_Value1=0x80;//
 						Bat_Value2=0x40;///
 						Bat_Value3=0x20;///
 					}
-					if(Pwr1||Pwr2)////µç´Ì¼¤Ç¿¶È²»ÎªÁã¾Í¿ªÊ¼µ¹¼ÆÊ±
+					if(Pwr1||Pwr2)////ç”µåˆºæ¿€å¼ºåº¦ä¸ä¸ºé›¶å°±å¼€å§‹å€’è®¡æ—¶
 					{
             if(Second==0)
             {
@@ -1364,12 +1270,6 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
               Second--;
 						}  
 					}
-//					if((Pwr1==0)&&(Pwr2==0))////Èç¹ûÁ½Í¨µÀ¶¼Ã»ÓĞ¹¤×÷
-//					{
-//						Sleep_cnt++;
-//						if(Sleep_cnt>300)///5·ÖÖÓ´ı»ú¾ÍĞİÃß
-//							Pwr_Flag=0;
-//					}
 				}
 				BEL_Count++;
 				if(BEL_Count>1000)
@@ -1385,7 +1285,7 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 /////
 //void EXTI1_IRQHandler(void)
 //{
-//    if (RESET != EXTI_GetITStatus(EXTI_LINE1)) ////AÍ¨µÀµç´Ì¼¤ÍÑÂä¼ì²â
+//    if (RESET != EXTI_GetITStatus(EXTI_LINE1)) ////Aé€šé“ç”µåˆºæ¿€è„±è½æ£€æµ‹
 //    {
 //        EXTI_ClrITPendBit(EXTI_LINE1);
 //        if(Pwr1>3)
@@ -1394,7 +1294,7 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 //}
 //void EXTI2_IRQHandler(void)
 //{
-//		if (RESET != EXTI_GetITStatus(EXTI_LINE2)) ////BÍ¨µÀµç´Ì¼¤ÍÑÂä¼ì²â
+//		if (RESET != EXTI_GetITStatus(EXTI_LINE2)) ////Bé€šé“ç”µåˆºæ¿€è„±è½æ£€æµ‹
 //    {
 //        EXTI_ClrITPendBit(EXTI_LINE2);
 //				if(Pwr2>3)
@@ -1403,11 +1303,11 @@ void TIM5_IRQHandler(void)///×÷ÎªÍ¨ÓÃ¶¨Ê±Æ÷Ê¹ÓÃ
 //}
 void EXTI15_10_IRQHandler(void)
 {
-    if (RESET != EXTI_GetITStatus(EXTI_LINE10)) ////CHARG»½ĞÑ
+    if (RESET != EXTI_GetITStatus(EXTI_LINE10)) ////CHARGå”¤é†’
     {
         EXTI_ClrITPendBit(EXTI_LINE10);
     }
-		if (RESET != EXTI_GetITStatus(EXTI_LINE15)) ////PB»½ĞÑ
+		if (RESET != EXTI_GetITStatus(EXTI_LINE15)) ////PBå”¤é†’
     {
         EXTI_ClrITPendBit(EXTI_LINE15);
     }

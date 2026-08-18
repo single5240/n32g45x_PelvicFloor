@@ -63,8 +63,6 @@ extern "C" {
 #define READ_CHARG						GPIO_ReadInputDataBit(CHARG_PORT,CHARG_PIN)
 
 extern uint16_t TIM2_PrescalerValue;
-extern uint16_t TIM3_PrescalerValue;
-extern uint16_t TIM4_PrescalerValue;
 extern uint16_t TIM5_PrescalerValue;
 
 void RCC_Configuration(void);

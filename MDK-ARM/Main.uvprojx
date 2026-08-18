@@ -487,11 +487,6 @@
               <FilePath>..\src\tm1621c.c</FilePath>
             </File>
             <File>
-              <FileName>WorkMode.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\src\WorkMode.c</FilePath>
-            </File>
-            <File>
               <FileName>AppHandle.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\src\AppHandle.c</FilePath>

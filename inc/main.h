@@ -145,20 +145,6 @@ extern "C" {
 
 
 
-void KeyScan(void);
-void KeyEvent(void);
-
-void SendPrg(void);
-
-
-void DisplayPrg(void);
-void ChargPrg(void);
-void AdcPrg(void);
-
-void Mode_Select(void);
-
-void Wave_ModeChange(void);
-
 typedef enum
 {
     FAILED = 0,

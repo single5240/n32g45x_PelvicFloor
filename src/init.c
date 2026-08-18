@@ -112,7 +112,7 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitPeripheral(GPIOA, &GPIO_InitStructure);
 	
-		GPIO_InitStructure.Pin       = PB_PWRM_PIN|PB_SS_PIN;//////œ¬¿≠
+		GPIO_InitStructure.Pin       = PB_PWRM_PIN|PB_SS_PIN;//////‰∏ãÊãâ
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD;
     GPIO_InitPeripheral(GPIOA, &GPIO_InitStructure);
 	
@@ -125,7 +125,7 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 		
-		GPIO_InitStructure.Pin       = PB_MAIN_PIN|PB_PWRP_PIN|PB_FUN_PIN;////œ¬¿≠
+		GPIO_InitStructure.Pin       = PB_MAIN_PIN|PB_PWRP_PIN|PB_FUN_PIN;////‰∏ãÊãâ
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 		
@@ -176,11 +176,11 @@ void TIM1_Configuration(void)
     TIM_InitTimeBase(TIM1, &TIM_TimeBaseStructure);
 
     /* PWM1 Mode configuration: Channel1 *////1L
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///≤®–Œ…Ë÷√
-    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;/// ‰≥ˆ πƒ‹
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///Ê≥¢ÂΩ¢ËÆæÁΩÆ
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;///ËæìÂá∫‰ΩøËÉΩ
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///’ºø’±»=Pulse/Period
-    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///”≈œ»º∂
+    TIM_OCInitStructure.Pulse        = 7800;///Âç†Á©∫ÊØî=Pulse/Period
+    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///‰ºòÂÖàÁ∫ß
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
     TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -188,11 +188,11 @@ void TIM1_Configuration(void)
     TIM_InitOc1(TIM1, &TIM_OCInitStructure);
 
     /* PWM1 Mode configuration: Channel2 *////1R
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///≤®–Œ…Ë÷√
-    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;/// ‰≥ˆ πƒ‹
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///Ê≥¢ÂΩ¢ËÆæÁΩÆ
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;///ËæìÂá∫‰ΩøËÉΩ
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///’ºø’±»=Pulse/Period
-    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///”≈œ»º∂
+    TIM_OCInitStructure.Pulse        = 7800;///Âç†Á©∫ÊØî=Pulse/Period
+    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///‰ºòÂÖàÁ∫ß
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
     TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -225,11 +225,11 @@ void TIM8_Configuration(void)
     TIM_InitTimeBase(TIM8, &TIM_TimeBaseStructure);
 
     /* PWM1 Mode configuration: Channel1 *////2R
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///≤®–Œ…Ë÷√
-    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;/// ‰≥ˆ πƒ‹
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///Ê≥¢ÂΩ¢ËÆæÁΩÆ
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;///ËæìÂá∫‰ΩøËÉΩ
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///’ºø’±»=Pulse/Period
-    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///”≈œ»º∂
+    TIM_OCInitStructure.Pulse        = 7800;///Âç†Á©∫ÊØî=Pulse/Period
+    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///‰ºòÂÖàÁ∫ß
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
     TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -237,11 +237,11 @@ void TIM8_Configuration(void)
     TIM_InitOc1(TIM8, &TIM_OCInitStructure);
 
     /* PWM1 Mode configuration: Channel2 *////2L
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///≤®–Œ…Ë÷√
-//    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;/// ‰≥ˆ πƒ‹
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///Ê≥¢ÂΩ¢ËÆæÁΩÆ
+//    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;///ËæìÂá∫‰ΩøËÉΩ
 //    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///’ºø’±»=Pulse/Period
-//    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///”≈œ»º∂
+    TIM_OCInitStructure.Pulse        = 7800;///Âç†Á©∫ÊØî=Pulse/Period
+//    TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///‰ºòÂÖàÁ∫ß
 //    TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
 //    TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
 //    TIM_OCInitStructure.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
@@ -256,11 +256,10 @@ void TIM8_Configuration(void)
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
 }
 
-//void TIM3_Configuration(void)////Õ®”√∂® ±∆˜
+//void TIM3_Configuration(void)////ÈÄöÁî®ÂÆöÊó∂Âô®
 //{
 //    TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
-//    TIM3_PrescalerValue = 7; //(uint16_t) (SystemCoreClock / 12000000) - 1;
 
 //    /* Time base configuration */
 //    TIM_TimeBaseStructure.Period    = 7999;////(7+1)*(7999+1)/64=1ms
@@ -270,7 +269,6 @@ void TIM8_Configuration(void)
 
 //    TIM_InitTimeBase(TIM3, &TIM_TimeBaseStructure);
 //    /* Prescaler configuration */
-//    TIM_ConfigPrescaler(TIM3, TIM3_PrescalerValue, TIM_PSC_RELOAD_MODE_IMMEDIATE);
 
 //    /* TIM2 enable update irq */
 //    TIM_ConfigInt(TIM3, TIM_INT_UPDATE, ENABLE);
@@ -346,7 +344,7 @@ void TIM3_Configuration(void)////BUZZ
 /**
  * @brief  Configures tim4 clocks.
  */
-void TIM2_Configuration(void)////Õ®”√∂® ±∆˜
+void TIM2_Configuration(void)////ÈÄöÁî®ÂÆöÊó∂Âô®
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
@@ -399,7 +397,7 @@ void TIM4_Configuration(void)////MOTO
     /* TIM3 enable counter */
     TIM_Enable(TIM4, ENABLE);
 }
-void TIM5_Configuration(void)////Õ®”√∂® ±∆˜
+void TIM5_Configuration(void)////ÈÄöÁî®ÂÆöÊó∂Âô®
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
@@ -424,7 +422,7 @@ void TIM5_Configuration(void)////Õ®”√∂® ±∆˜
 /**
  * @brief  TIM6 Init.
  */
-void TIM6_Configuration(void)////DAC  ±÷”
+void TIM6_Configuration(void)////DAC Êó∂Èíü
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
 
@@ -440,7 +438,7 @@ void TIM6_Configuration(void)////DAC  ±÷”
     TIM_SelectOutputTrig(TIM6, TIM_TRGO_SRC_UPDATE);
 }
 
-void USART2_Configuration(void)////…œŒªª˙
+void USART2_Configuration(void)////‰∏ä‰ΩçÊú∫
 {
     USART_InitType USART_InitStructure;
     /* USARTy and USARTz configuration ------------------------------------------------------*/
@@ -448,19 +446,19 @@ void USART2_Configuration(void)////…œŒªª˙
     USART_InitStructure.BaudRate            = 115200;
     USART_InitStructure.WordLength          = USART_WL_8B;
     USART_InitStructure.StopBits            = USART_STPB_1;
-    USART_InitStructure.Parity              = USART_PE_NO;///ºÏ—Èƒ£ Ω
+    USART_InitStructure.Parity              = USART_PE_NO;///Ê£ÄÈ™åÊ®°Âºè
     USART_InitStructure.HardwareFlowControl = USART_HFCTRL_NONE;
     USART_InitStructure.Mode                = USART_MODE_RX | USART_MODE_TX;
 
     /* Configure USARTy */
     USART_Init(USART2, &USART_InitStructure);
     /* Enable USARTz Receive interrupts */
-    USART_ConfigInt(USART2, USART_INT_RXDNE, ENABLE);////ø™∆ÙΩ” ’÷–∂œ
-//    USART_ConfigInt(USART1, USART_INT_TXDE, ENABLE);///ø™∆Ù∑¢ÀÕ÷–∂œ
+    USART_ConfigInt(USART2, USART_INT_RXDNE, ENABLE);////ÂºÄÂêØÊé•Êî∂‰∏≠Êñ≠
+//    USART_ConfigInt(USART1, USART_INT_TXDE, ENABLE);///ÂºÄÂêØÂèëÈÄÅ‰∏≠Êñ≠
     /* Enable the USARTy */
     USART_Enable(USART2, ENABLE);
 }
-//void USART3_Configuration(void)////…œŒªª˙
+//void USART3_Configuration(void)////‰∏ä‰ΩçÊú∫
 //{
 //    USART_InitType USART_InitStructure;
 //    /* USARTy and USARTz configuration ------------------------------------------------------*/
@@ -468,19 +466,19 @@ void USART2_Configuration(void)////…œŒªª˙
 //    USART_InitStructure.BaudRate            = 115200;
 //    USART_InitStructure.WordLength          = USART_WL_8B;
 //    USART_InitStructure.StopBits            = USART_STPB_1;
-//    USART_InitStructure.Parity              = USART_PE_NO;///ºÏ—Èƒ£ Ω
+//    USART_InitStructure.Parity              = USART_PE_NO;///Ê£ÄÈ™åÊ®°Âºè
 //    USART_InitStructure.HardwareFlowControl = USART_HFCTRL_NONE;
 //    USART_InitStructure.Mode                = USART_MODE_RX | USART_MODE_TX;
 
 //    /* Configure USARTy */
 //    USART_Init(USART3, &USART_InitStructure);
 //    /* Enable USARTz Receive interrupts */
-//    USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);////ø™∆ÙΩ” ’÷–∂œ
-//    //		USART_ConfigInt(USART3, USART_INT_TXDE, ENABLE);///ø™∆Ù∑¢ÀÕ÷–∂œ
+//    USART_ConfigInt(USART3, USART_INT_RXDNE, ENABLE);////ÂºÄÂêØÊé•Êî∂‰∏≠Êñ≠
+//    //		USART_ConfigInt(USART3, USART_INT_TXDE, ENABLE);///ÂºÄÂêØÂèëÈÄÅ‰∏≠Êñ≠
 //    /* Enable the USARTy */
 //    USART_Enable(USART3, ENABLE);
 //}
-//void USART5_Configuration(void)////¥Æø⁄
+//void USART5_Configuration(void)////‰∏≤Âè£
 //{
 //    USART_InitType USART_InitStructure;
 //    /* USARTy and USARTz configuration ------------------------------------------------------*/
@@ -488,15 +486,15 @@ void USART2_Configuration(void)////…œŒªª˙
 //    USART_InitStructure.BaudRate            = 115200;
 //    USART_InitStructure.WordLength          = USART_WL_8B;
 //    USART_InitStructure.StopBits            = USART_STPB_1;
-//    USART_InitStructure.Parity              = USART_PE_NO;///ºÏ—Èƒ£ Ω
+//    USART_InitStructure.Parity              = USART_PE_NO;///Ê£ÄÈ™åÊ®°Âºè
 //    USART_InitStructure.HardwareFlowControl = USART_HFCTRL_NONE;
 //    USART_InitStructure.Mode                = USART_MODE_RX | USART_MODE_TX;
 
 //    /* Configure USARTy */
 //    USART_Init(UART5, &USART_InitStructure);
 //    /* Enable USARTz Receive interrupts */
-//    USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);////ø™∆ÙΩ” ’÷–∂œ
-//    //		USART_ConfigInt(UART4, USART_INT_TXDE, ENABLE);///ø™∆Ù∑¢ÀÕ÷–∂œ
+//    USART_ConfigInt(UART5, USART_INT_RXDNE, ENABLE);////ÂºÄÂêØÊé•Êî∂‰∏≠Êñ≠
+//    //		USART_ConfigInt(UART4, USART_INT_TXDE, ENABLE);///ÂºÄÂêØÂèëÈÄÅ‰∏≠Êñ≠
 //    /* Enable the USARTy */
 //    USART_Enable(UART5, ENABLE);
 //}
@@ -549,10 +547,10 @@ void DAC_ChannelConfig(void)
     DAC_InitType DAC_InitStructure;
 
     /* DAC channel1 Configuration */
-    DAC_InitStructure.Trigger          = DAC_TRG_T6_TRGO;////T6∂® ±∆˜¥•∑¢
+    DAC_InitStructure.Trigger          = DAC_TRG_T6_TRGO;////T6ÂÆöÊó∂Âô®Ëß¶Âèë
     DAC_InitStructure.WaveGen          = DAC_WAVEGEN_NOISE;
     DAC_InitStructure.LfsrUnMaskTriAmp = DAC_UNMASK_LFSRBIT0;
-    DAC_InitStructure.BufferOutput     = DAC_BUFFOUTPUT_ENABLE;/// ‰≥ˆ πƒ‹
+    DAC_InitStructure.BufferOutput     = DAC_BUFFOUTPUT_ENABLE;///ËæìÂá∫‰ΩøËÉΩ
     DAC_Init(DAC_CHANNEL_1,&DAC_InitStructure);
     DAC_Init(DAC_CHANNEL_2,&DAC_InitStructure);
 
