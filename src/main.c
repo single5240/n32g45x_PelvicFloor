@@ -193,6 +193,9 @@ typedef enum
 #define BATTERY_LOW_EXIT_MV               3600U
 #define BATTERY_LOW_CONFIRM_COUNT         3U
 
+/* Pressure sensor raw ADC test: PA2 / ADC1 channel 11. */
+#define PRESSURE_ADC_LOG_PERIOD_MS         5000U
+
 typedef struct
 {
 	AppState_t state;        /* 当前系统状�? */
@@ -277,6 +280,7 @@ static KeyFilter_t s_keys[KEY_ID_COUNT];
 static AppEventQueue_t s_event_queue;
 static UiModel_t s_ui;
 static BatteryContext_t s_battery;
+static uint32_t s_pressure_adc_last_log_ms;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -336,6 +340,7 @@ static void Battery_UpdateLowState(uint16_t voltage_mv);
 static void Battery_ProcessMeasurement(uint16_t battery_adc,
                                        uint16_t reference_adc);
 static void Battery_Task100ms(void);
+static void PressureAdc_Task100ms(void);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码�? */
 void AppUi_SetBleConnected(uint8_t connected);
@@ -1836,6 +1841,34 @@ static void Battery_Task100ms(void)
 	s_battery.measurement_pending = 1U;
 }
 
+/*
+ * Pressure sensor bring-up logging.
+ * ADC1 is shared with the battery monitor, so this task runs only after the
+ * battery monitor has initialized ADC1 and only while pressure mode is active.
+ */
+static void PressureAdc_Task100ms(void)
+{
+	uint32_t now = s_system_tick_ms;
+	uint16_t raw_value;
+
+	if ((s_app.state != APP_STATE_PRESSURE) ||
+	    (s_battery.adc_initialized == 0U))
+	{
+		s_pressure_adc_last_log_ms = now;
+		return;
+	}
+
+	if ((uint32_t)(now - s_pressure_adc_last_log_ms) <
+	    PRESSURE_ADC_LOG_PERIOD_MS)
+	{
+		return;
+	}
+
+	s_pressure_adc_last_log_ms = now;
+	raw_value = ADC_GetData(ADC1, ADC1_Channel_11_PA2);
+	LOG_I("t=%u pressure adc raw=%u", now, raw_value);
+}
+
 uint8_t AppBattery_IsValid(void)
 {
 	return s_battery.valid;
@@ -2074,7 +2107,7 @@ static void Ui_Task50ms(void)
 static void Sensor_Task100ms(void)
 {
 	Battery_Task100ms();
-	/* TODO：压力模式启用后，在这里增加压力 ADC 的非阻塞采样�? */
+	PressureAdc_Task100ms();
 }
 
 static void Power_Task1000ms(void)
