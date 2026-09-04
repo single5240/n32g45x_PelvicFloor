@@ -194,7 +194,8 @@ typedef enum
 #define BATTERY_LOW_CONFIRM_COUNT         3U
 
 /* Pressure sensor raw ADC test: PA2 / ADC1 channel 11. */
-#define PRESSURE_ADC_LOG_PERIOD_MS         5000U
+#define PRESSURE_ADC_SAMPLE_PERIOD_MS      200U
+#define PRESSURE_ADC_AVERAGE_PERIOD_MS     5000U
 
 typedef struct
 {
@@ -280,7 +281,11 @@ static KeyFilter_t s_keys[KEY_ID_COUNT];
 static AppEventQueue_t s_event_queue;
 static UiModel_t s_ui;
 static BatteryContext_t s_battery;
-static uint32_t s_pressure_adc_last_log_ms;
+static uint32_t s_pressure_adc_last_sample_ms;
+static uint32_t s_pressure_adc_window_start_ms;
+static uint32_t s_pressure_adc_sample_sum;
+static uint16_t s_pressure_adc_sample_count;
+static uint8_t s_pressure_adc_sampling_active;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -1527,17 +1532,15 @@ static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
 	 * them for every retained sample: after selecting each channel, discard one
 	 * conversion so the ADC sampling capacitor can settle to the new input.
 	 */
-	if (ADC_GetData(ADC1, ADC1_Channel_04_PA3) == 0U)
+	if (ADC_GetData(ADC1, ADC1_Channel_04_PA3, &battery_sample) == 0U)
 	{
 		return 0U;
 	}
 
 	for (index = 0U; index < BATTERY_ADC_SAMPLE_COUNT; index++)
 	{
-		battery_sample = ADC_GetData(ADC1, ADC1_Channel_04_PA3);
-
-		/* 0 同时也是 ADC_GetData() 的超时返回值�? */
-		if (battery_sample == 0U)
+		if (ADC_GetData(ADC1, ADC1_Channel_04_PA3,
+		                &battery_sample) == 0U)
 		{
 			return 0U;
 		}
@@ -1554,17 +1557,15 @@ static uint8_t Battery_ReadAveragedAdc(uint16_t *battery_adc,
 		}
 	}
 
-	if (ADC_GetData(ADC1, ADC1_Channel_03_PA6) == 0U)
+	if (ADC_GetData(ADC1, ADC1_Channel_03_PA6, &reference_sample) == 0U)
 	{
 		return 0U;
 	}
 
 	for (index = 0U; index < BATTERY_ADC_SAMPLE_COUNT; index++)
 	{
-		reference_sample = ADC_GetData(ADC1, ADC1_Channel_03_PA6);
-
-		/* 外部 2.5 V 参考不可能�? 0�? */
-		if (reference_sample == 0U)
+		if (ADC_GetData(ADC1, ADC1_Channel_03_PA6,
+		                &reference_sample) == 0U)
 		{
 			return 0U;
 		}
@@ -1850,23 +1851,72 @@ static void PressureAdc_Task100ms(void)
 {
 	uint32_t now = s_system_tick_ms;
 	uint16_t raw_value;
+	uint16_t average_value;
 
 	if ((s_app.state != APP_STATE_PRESSURE) ||
 	    (s_battery.adc_initialized == 0U))
 	{
-		s_pressure_adc_last_log_ms = now;
+		s_pressure_adc_sampling_active = 0U;
+		s_pressure_adc_last_sample_ms = now;
+		s_pressure_adc_window_start_ms = now;
+		s_pressure_adc_sample_sum = 0U;
+		s_pressure_adc_sample_count = 0U;
 		return;
 	}
 
-	if ((uint32_t)(now - s_pressure_adc_last_log_ms) <
-	    PRESSURE_ADC_LOG_PERIOD_MS)
+	if (s_pressure_adc_sampling_active == 0U)
+	{
+		s_pressure_adc_sampling_active = 1U;
+		s_pressure_adc_last_sample_ms = now;
+		s_pressure_adc_window_start_ms = now;
+		s_pressure_adc_sample_sum = 0U;
+		s_pressure_adc_sample_count = 0U;
+		return;
+	}
+
+	if ((uint32_t)(now - s_pressure_adc_last_sample_ms) <
+	    PRESSURE_ADC_SAMPLE_PERIOD_MS)
 	{
 		return;
 	}
 
-	s_pressure_adc_last_log_ms = now;
-	raw_value = ADC_GetData(ADC1, ADC1_Channel_11_PA2);
-	LOG_I("t=%u pressure adc raw=%u", now, raw_value);
+	if ((uint32_t)(now - s_pressure_adc_last_sample_ms) >
+	    (PRESSURE_ADC_SAMPLE_PERIOD_MS * 4U))
+	{
+		s_pressure_adc_last_sample_ms = now;
+	}
+	else
+	{
+		s_pressure_adc_last_sample_ms += PRESSURE_ADC_SAMPLE_PERIOD_MS;
+	}
+
+	/* ADC1 may have just switched from battery PA3/PA6; discard PA2 first conversion. */
+	if (ADC_GetData(ADC1, ADC1_Channel_11_PA2, &raw_value) == 0U)
+	{
+		return;
+	}
+	if (ADC_GetData(ADC1, ADC1_Channel_11_PA2, &raw_value) == 0U)
+	{
+		return;
+	}
+	s_pressure_adc_sample_sum += raw_value;
+	s_pressure_adc_sample_count++;
+
+	if ((uint32_t)(now - s_pressure_adc_window_start_ms) <
+	    PRESSURE_ADC_AVERAGE_PERIOD_MS)
+	{
+		return;
+	}
+
+	average_value = (uint16_t)((s_pressure_adc_sample_sum +
+	                            (s_pressure_adc_sample_count / 2U)) /
+	                           s_pressure_adc_sample_count);
+	LOG_I("t=%u pressure adc avg=%u samples=%u", now, average_value,
+	      s_pressure_adc_sample_count);
+
+	s_pressure_adc_window_start_ms = now;
+	s_pressure_adc_sample_sum = 0U;
+	s_pressure_adc_sample_count = 0U;
 }
 
 uint8_t AppBattery_IsValid(void)

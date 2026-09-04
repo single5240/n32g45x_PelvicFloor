@@ -77,7 +77,7 @@ void ChargExtiInit(void);
 void PBExtiInit(void);
 uint8_t ADC_Initial(ADC_Module* ADCx);
 uint8_t ADC_DisableSafe(ADC_Module* ADCx);
-uint16_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel);
+uint8_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel, uint16_t *data);
 
 
 #ifdef __cplusplus

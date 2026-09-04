@@ -33,6 +33,7 @@
  * @copyright Copyright (c) 2019, Nations Technologies Inc. All rights reserved.
  */
 #include "init.h"
+#include "delay.h"
 
 /** @addtogroup
  * @{
@@ -693,6 +694,8 @@ uint8_t ADC_Initial(ADC_Module* ADCx)
             return 0U;
         }
     }
+    /* Official requirement: wait at least 8 us after ADC enable. */
+    Delay10us(1U);
     /* Start ADC calibration */
     ADC_StartCalibration(ADCx);
     /* Check the end of ADC calibration */
@@ -705,6 +708,8 @@ uint8_t ADC_Initial(ADC_Module* ADCx)
             return 0U;
         }
     }
+    /* Official requirement: wait at least 8 us after calibration. */
+    Delay10us(1U);
 
     return 1U;
 }
@@ -723,10 +728,15 @@ uint8_t ADC_DisableSafe(ADC_Module* ADCx)
 
     return 1U;
 }
-uint16_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel)
+uint8_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel, uint16_t *data)
 {
     uint32_t timeout = 100000U;
-    uint16_t dat;
+
+    if (data == NULL)
+    {
+        return 0U;
+    }
+    *data = 0U;
 
     ADC_ClearFlag(ADCx, ADC_FLAG_ENDC);
     ADC_ClearFlag(ADCx, ADC_FLAG_STR);
@@ -738,10 +748,15 @@ uint16_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel)
             return 0U;
         }
     }
-    dat=ADC_GetDat(ADCx);
+    /*
+     * N32G455 erratum: after ENDC, wait at least two ADC clocks before
+     * reading DAT. ADC clock is AHB/16 here, so 1 us provides margin.
+     */
+    Delay1us(1U);
+    *data = ADC_GetDat(ADCx);
     ADC_ClearFlag(ADCx, ADC_FLAG_ENDC);
     ADC_ClearFlag(ADCx, ADC_FLAG_STR);
-    return dat;
+    return 1U;
 }
 
 
