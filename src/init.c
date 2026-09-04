@@ -412,28 +412,32 @@ void TIM4_Configuration(void)////MOTO
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
     OCInitType TIM_OCInitStructure;
-    /* Compute the prescaler value */
+    uint32_t prescaler;
+
+    /* APB1 is not divided in the current clock tree, so TIM4 runs at HCLK. */
+    prescaler = (SystemCoreClock /
+                 (MOTOR_PWM_FREQUENCY_HZ * MOTOR_PWM_PERIOD_COUNTS)) - 1U;
 
     /* Time base configuration */
-    TIM_TimeBaseStructure.Period    = 7999;////100hz
-    TIM_TimeBaseStructure.Prescaler = 799;
+    TIM_TimeBaseStructure.Period    = MOTOR_PWM_PERIOD_COUNTS - 1U;
+    TIM_TimeBaseStructure.Prescaler = (uint16_t)prescaler;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_UP;
 
     TIM_InitTimeBase(TIM4, &TIM_TimeBaseStructure);
 		
-		TIM_OCInitStructure.OcMode      = TIM_OCMODE_PWM1;
+    TIM_OCInitStructure.OcMode      = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState = TIM_OUTPUT_STATE_ENABLE;
-    TIM_OCInitStructure.Pulse       = 0;
+    TIM_OCInitStructure.Pulse       = 0U;
     TIM_OCInitStructure.OcPolarity  = TIM_OC_POLARITY_HIGH;
-		
-		TIM_InitOc4(TIM4, &TIM_OCInitStructure);
+
+    TIM_InitOc4(TIM4, &TIM_OCInitStructure);
 
     TIM_ConfigOc4Preload(TIM4, TIM_OC_PRE_LOAD_ENABLE);////R
 
     TIM_ConfigArPreload(TIM4, ENABLE);
 
-    /* TIM3 enable counter */
+    /* Keep the counter running; the channel remains disabled until inflation. */
     TIM_Enable(TIM4, ENABLE);
 }
 /**

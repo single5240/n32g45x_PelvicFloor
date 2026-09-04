@@ -171,10 +171,13 @@ typedef enum
 #define POWER_ON_HOLD_MS           2000U
 #define POWER_OFF_HOLD_MS          2000U
 #define START_LONG_HOLD_MS         2000U
+#define PRESSURE_START_LONG_HOLD_MS 3000U
 #define UI_BLINK_PERIOD_MS         500U
 #define UI_MAX_POWER               60U
 #define UI_BEEP_ON_MS              60U
 #define UI_BEEP_GAP_MS             80U
+#define PRESSURE_INFLATE_TIMEOUT_MS 3000U
+#define PRESSURE_DEFLATE_TIME_MS    3000U
 
 /* 电池检测参数：PA3 �? 1/2 电池分压，PA6 为外�? 2.5 V 参考�? */
 #define BATTERY_ADC_SAMPLE_COUNT          8U
@@ -205,6 +208,15 @@ typedef enum
 #define PRESSURE_ADC_ZERO_CODE             347U
 #define PRESSURE_ADC_ZERO_DEADBAND         12U
 #define PRESSURE_ADC_BATTERY_PAUSE_TICKS   2U
+
+/* 联调压力安全阈值可调整，但不得超过固定的 150 mmHg 硬上限。 */
+#define PRESSURE_SAFE_LIMIT_MMHG            100U
+#define PRESSURE_HARD_LIMIT_MMHG            150U
+
+#if (PRESSURE_SAFE_LIMIT_MMHG == 0U) || \
+    (PRESSURE_SAFE_LIMIT_MMHG > PRESSURE_HARD_LIMIT_MMHG)
+#error "PRESSURE_SAFE_LIMIT_MMHG must be within 1..150 mmHg"
+#endif
 
 typedef struct
 {
@@ -247,7 +259,7 @@ typedef struct
 	uint8_t charger_full;
 	uint8_t charge_frame;
 	uint8_t ble_connected;          /* 未连接常亮，连接后闪�? */
-	uint16_t pressure_value;        /* 已换算的显示值，范围限制�? 0�?999 */
+	uint16_t pressure_value;        /* 已换算的显示值，硬限制为 0～150 mmHg */
 	uint8_t pressure_result_blink;  /* 测量结果持续闪烁，直到再次按�? */
 	PressureAction_t pressure_action;
 	uint16_t pressure_action_ms;
@@ -297,6 +309,7 @@ static uint32_t s_pressure_adc_sample_sum;
 static uint16_t s_pressure_adc_sample_count;
 static uint8_t s_pressure_adc_sampling_active;
 static uint8_t s_pressure_adc_pause_ticks;
+static PressureAction_t s_pressure_output_action;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -306,6 +319,7 @@ static void Board_Init(void);
 static void Board_EnterSafeState(void);
 static void Treatment_StopOutputs(void);
 static void Pressure_StopOutputs(void);
+static void Pressure_ApplyOutputs(void);
 static void App_Init(void);
 static void App_RunOnce(void);
 static void App_RequestState(AppState_t next_state);
@@ -401,6 +415,7 @@ static void Board_Init(void)
 	TIM6_Configuration();
 	TIM1_Configuration();
 	TIM8_Configuration();
+	TIM4_Configuration();
 	NVIC_Configuration();
 	SEGGER_RTT_Init();
 	LOG_I("t=%u system init, core=%u Hz", s_system_tick_ms, SystemCoreClock);
@@ -469,6 +484,7 @@ static void Pressure_StopOutputs(void)
 	TIM_SetCmp4(TIM4, 0U);
 	TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_DISABLE);
 	SWEN_OFF;
+	s_pressure_output_action = PRESSURE_ACTION_IDLE;
 	BATEN_OFF;
 	s_pressure_adc_sampling_active = 0U;
 	s_pressure_adc_pause_ticks = 0U;
@@ -480,6 +496,41 @@ static void Pressure_StopOutputs(void)
 		}
 		s_pressure_adc_initialized = 0U;
 	}
+}
+
+static void Pressure_ApplyOutputs(void)
+{
+	PressureAction_t requested_action = PRESSURE_ACTION_IDLE;
+
+	if ((s_app.state == APP_STATE_PRESSURE) &&
+	    (s_ui.charger_connected == 0U))
+	{
+		requested_action = s_ui.pressure_action;
+	}
+
+	if (requested_action == s_pressure_output_action)
+	{
+		return;
+	}
+
+	/* Any action transition first returns both actuators to the inactive state. */
+	TIM_SetCmp4(TIM4, 0U);
+	TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_DISABLE);
+	SWEN_OFF;
+
+	if (requested_action == PRESSURE_ACTION_INFLATING)
+	{
+		TIM_SetCmp4(TIM4, MOTOR_PWM_COMPARE_COUNTS);
+		TIM_GenerateEvent(TIM4, TIM_EVT_SRC_UPDATE);
+		TIM_SetCnt(TIM4, 0U);
+		TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_ENABLE);
+	}
+	else if (requested_action == PRESSURE_ACTION_DEFLATING)
+	{
+		SWEN_ON;
+	}
+
+	s_pressure_output_action = requested_action;
 }
 
 /* 初始化应用状态，不在这里执行耗时或阻塞操作 */
@@ -822,7 +873,9 @@ static void Key_Update(KeyId_t key_id)
 	}
 	else if (key_id == KEY_ID_START)
 	{
-		long_threshold_ms = START_LONG_HOLD_MS;
+		long_threshold_ms = (s_app.state == APP_STATE_PRESSURE) ?
+		                    PRESSURE_START_LONG_HOLD_MS :
+		                    START_LONG_HOLD_MS;
 	}
 
 	if ((long_threshold_ms != 0U) &&
@@ -977,6 +1030,10 @@ static void App_HandleEvent(AppEvent_t event)
 	/* Charger events update power presence without interrupting active work. */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
 	{
+		if (s_app.state == APP_STATE_PRESSURE)
+		{
+			Pressure_StopOutputs();
+		}
 		/* Charger presence is parallel to normal operation. Only enter the
 		 * charging-only display when the product is currently powered off. */
 		if (s_app.state == APP_STATE_POWER_OFF)
@@ -1068,21 +1125,32 @@ static void App_HandleEvent(AppEvent_t event)
 				LOG_I("t=%u formula=P%u, power reset", s_system_tick_ms,
 				      (uint8_t)(s_ui.formula + 1U));
 			}
-			else if (s_app.state == APP_STATE_PRESSURE)
+			else if ((s_app.state == APP_STATE_PRESSURE) &&
+			         (s_ui.charger_connected == 0U))
 			{
-				/* 轻按为充气启�?/停止；真实完成条件由压力控制模块通知�? */
-				if (s_ui.pressure_action == PRESSURE_ACTION_INFLATING)
+				/* 短按启动/停止充气，联调阶段由固定超时兜底。 */
+				if (s_ui.pressure_value >= PRESSURE_SAFE_LIMIT_MMHG)
+				{
+					LOG_W("t=%u inflation blocked, pressure=%u mmHg limit=%u mmHg",
+					      s_system_tick_ms, s_ui.pressure_value,
+					      PRESSURE_SAFE_LIMIT_MMHG);
+				}
+				else if (s_ui.pressure_action == PRESSURE_ACTION_INFLATING)
 				{
 					s_ui.pressure_action = PRESSURE_ACTION_IDLE;
+					s_ui.pressure_action_ms = 0U;
 				}
 				else
 				{
 					s_ui.pressure_action = PRESSURE_ACTION_INFLATING;
+					s_ui.pressure_action_ms = PRESSURE_INFLATE_TIMEOUT_MS;
 				}
-				s_ui.pressure_action_ms = 0U;
-				LOG_I("t=%u pressure action=%s", s_system_tick_ms,
-				      (s_ui.pressure_action == PRESSURE_ACTION_INFLATING) ?
-				      "INFLATING" : "IDLE");
+				if (s_ui.pressure_value < PRESSURE_SAFE_LIMIT_MMHG)
+				{
+					LOG_I("t=%u pressure action=%s", s_system_tick_ms,
+					      (s_ui.pressure_action == PRESSURE_ACTION_INFLATING) ?
+					      "INFLATING" : "IDLE");
+				}
 			}
 			s_app.ui_dirty = 1U;
 			break;
@@ -1095,10 +1163,11 @@ static void App_HandleEvent(AppEvent_t event)
 				LOG_I("t=%u selected channel=%u", s_system_tick_ms,
 				      (uint8_t)(s_ui.selected_channel + 1U));
 			}
-			else if (s_app.state == APP_STATE_PRESSURE)
+			else if ((s_app.state == APP_STATE_PRESSURE) &&
+			         (s_ui.charger_connected == 0U))
 			{
 				s_ui.pressure_action = PRESSURE_ACTION_DEFLATING;
-				s_ui.pressure_action_ms = 2000U;
+				s_ui.pressure_action_ms = PRESSURE_DEFLATE_TIME_MS;
 				LOG_I("t=%u pressure action=DEFLATING", s_system_tick_ms);
 			}
 			s_app.ui_dirty = 1U;
@@ -1348,9 +1417,9 @@ static void Ui_RenderPressure(void)
 	uint8_t pressure_tens;
 	uint8_t pressure_ones;
 
-	if (pressure > 999U)
+	if (pressure > PRESSURE_HARD_LIMIT_MMHG)
 	{
-		pressure = 999U;
+		pressure = PRESSURE_HARD_LIMIT_MMHG;
 	}
 
 	if (s_ui.pressure_action == PRESSURE_ACTION_INFLATING)
@@ -1366,7 +1435,9 @@ static void Ui_RenderPressure(void)
 	pressure_tens = (uint8_t)((pressure / 10U) % 10U);
 	pressure_ones = (uint8_t)(pressure % 10U);
 
-	if ((s_ui.pressure_result_blink != 0U) && (s_ui.blink_on == 0U))
+	if (((s_ui.pressure_result_blink != 0U) ||
+	     (pressure >= PRESSURE_SAFE_LIMIT_MMHG)) &&
+	    (s_ui.blink_on == 0U))
 	{
 		pressure_hundreds = 10U;
 		pressure_tens = 10U;
@@ -1474,9 +1545,11 @@ void AppUi_SetBattery(uint8_t level, uint8_t low_battery)
 
 void AppUi_SetPressureResult(uint16_t value)
 {
-	s_ui.pressure_value = (value > 999U) ? 999U : value;
+	s_ui.pressure_value = (value > PRESSURE_HARD_LIMIT_MMHG) ?
+	                      PRESSURE_HARD_LIMIT_MMHG : value;
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 	s_ui.pressure_action_ms = 0U;
+	Pressure_ApplyOutputs();
 	s_ui.pressure_result_blink = 1U;
 	s_app.ui_dirty = 1U;
 	LOG_I("t=%u pressure result=%u mmHg", s_system_tick_ms,
@@ -1937,9 +2010,9 @@ static uint16_t Pressure_CalculateMmHg(uint16_t adc_value,
 	{
 		*sensor_output_uv = (uint16_t)sensor_uv;
 	}
-	if (pressure_mmhg > 999U)
+	if (pressure_mmhg > PRESSURE_HARD_LIMIT_MMHG)
 	{
-		return 999U;
+		return PRESSURE_HARD_LIMIT_MMHG;
 	}
 
 	return (uint16_t)pressure_mmhg;
@@ -2004,9 +2077,25 @@ static uint8_t Pressure_ReadFilteredAdc(uint16_t *adc_value)
 static void Pressure_UpdateLiveValue(uint16_t adc_value)
 {
 	uint16_t pressure_mmhg = Pressure_CalculateMmHg(adc_value, NULL, NULL);
+	uint8_t inflation_stopped = 0U;
+
+	if ((pressure_mmhg >= PRESSURE_SAFE_LIMIT_MMHG) &&
+	    (s_ui.pressure_action == PRESSURE_ACTION_INFLATING))
+	{
+		s_ui.pressure_action = PRESSURE_ACTION_IDLE;
+		s_ui.pressure_action_ms = 0U;
+		Pressure_ApplyOutputs();
+		inflation_stopped = 1U;
+		LOG_W("t=%u inflation stopped, pressure=%u mmHg limit=%u mmHg",
+		      s_system_tick_ms, pressure_mmhg, PRESSURE_SAFE_LIMIT_MMHG);
+	}
 
 	if (pressure_mmhg == s_ui.pressure_value)
 	{
+		if (inflation_stopped != 0U)
+		{
+			s_app.ui_dirty = 1U;
+		}
 		return;
 	}
 
@@ -2318,10 +2407,6 @@ static void Control_Task10ms(void)
 	previous_pwr1 = TreatmentPwmEnableCh1;
 	previous_pwr2 = TreatmentPwmEnableCh2;
 
-	/*
-	 * UI 联调阶段不驱动气泵。充气保持到再次轻按或控制模块通知完成�?
-	 * 放气图标保持 2 秒，后续由气阀控制模块替代这段临时时序�?
-	 */
 	if ((s_app.state == APP_STATE_PRESSURE) &&
 	    (s_ui.pressure_action != PRESSURE_ACTION_IDLE) &&
 	    (s_ui.pressure_action_ms != 0U))
@@ -2331,13 +2416,15 @@ static void Control_Task10ms(void)
 			s_ui.pressure_action_ms = 0U;
 			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 			s_app.ui_dirty = 1U;
-			LOG_I("t=%u pressure action completed", s_system_tick_ms);
+			LOG_I("t=%u pressure action timeout", s_system_tick_ms);
 		}
 		else
 		{
 			s_ui.pressure_action_ms -= KEY_SCAN_PERIOD_MS;
 		}
 	}
+
+	Pressure_ApplyOutputs();
 }
 
 static void Ui_Task50ms(void)

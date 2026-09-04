@@ -50,6 +50,12 @@ extern "C" {
 #define SWEN_ON 							GPIO_WriteBit(SWEN_PORT,SWEN_PIN,Bit_SET)
 #define SWEN_OFF 							GPIO_WriteBit(SWEN_PORT,SWEN_PIN,Bit_RESET)
 
+#define MOTOR_PWM_FREQUENCY_HZ       10000U
+#define MOTOR_PWM_PERIOD_COUNTS      12800U
+#define MOTOR_PWM_TEST_DUTY_PERCENT  50U
+#define MOTOR_PWM_COMPARE_COUNTS     ((MOTOR_PWM_PERIOD_COUNTS * \
+                                      MOTOR_PWM_TEST_DUTY_PERCENT) / 100U)
+
 #define READ_PB_MAIN					GPIO_ReadInputDataBit(PB_MAIN_PORT,PB_MAIN_PIN)
 #define READ_PB_SS						GPIO_ReadInputDataBit(PB_SS_PORT,PB_SS_PIN)
 #define READ_PB_FUN						GPIO_ReadInputDataBit(PB_FUN_PORT,PB_FUN_PIN)
