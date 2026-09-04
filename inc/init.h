@@ -75,7 +75,8 @@ void DAC_ChannelConfig(void);
 //void E2countExtiInit(void);
 void ChargExtiInit(void);
 void PBExtiInit(void);
-uint8_t ADC_Initial(ADC_Module* ADCx);
+uint8_t ADC1_Initial(void);
+uint8_t ADC2_Initial(void);
 uint8_t ADC_DisableSafe(ADC_Module* ADCx);
 uint8_t ADC_GetData(ADC_Module* ADCx, uint8_t ADC_Channel, uint16_t *data);
 

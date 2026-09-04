@@ -70,8 +70,8 @@ void RCC_Configuration(void)
 //    RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_UART5, ENABLE);
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_USART2, ENABLE);
 //    RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_USART3, ENABLE);
-    /* Enable ADC1, ADC2, ADC3 and ADC4 clocks */
-    RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_ADC1 | RCC_AHB_PERIPH_ADC2 | RCC_AHB_PERIPH_ADC3 | RCC_AHB_PERIPH_ADC4,
+    /* ADC1 is reserved for battery/reference; ADC2 is reserved for pressure. */
+    RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_ADC1 | RCC_AHB_PERIPH_ADC2,
                            ENABLE);
     /* RCC_ADCHCLK_DIV16*/
     ADC_ConfigClk(ADC_CTRL3_CKMOD_AHB,RCC_ADCHCLK_DIV16);
@@ -669,10 +669,15 @@ void PBExtiInit(void)
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 }
-uint8_t ADC_Initial(ADC_Module* ADCx)
+static uint8_t ADC_ModuleInitial(ADC_Module* ADCx)
 {
     ADC_InitType ADC_InitStructure;
+    ADC_InitTypeEx ADC_InitStructureEx;
     uint32_t timeout = 100000U;
+
+    /* Start from the reset value of the selected ADC register bank only. */
+    ADC_DeInit(ADCx);
+
     /* ADC configuration ------------------------------------------------------*/
     ADC_InitStructure.WorkMode       = ADC_WORKMODE_INDEPENDENT;
     ADC_InitStructure.MultiChEn      = DISABLE;
@@ -682,6 +687,18 @@ uint8_t ADC_Initial(ADC_Module* ADCx)
     ADC_InitStructure.ChsNumber      = 1;
     ADC_Init(ADCx, &ADC_InitStructure);
 
+    /* Explicitly configure CTRL3 instead of relying on reset values. */
+    ADC_InitStructureEx.VbatMinitEn     = DISABLE;
+    ADC_InitStructureEx.DeepPowerModEn  = DISABLE;
+    ADC_InitStructureEx.JendcIntEn      = DISABLE;
+    ADC_InitStructureEx.EndcIntEn       = DISABLE;
+    ADC_InitStructureEx.ClkMode         = ADC_CTRL3_CKMOD_AHB;
+    ADC_InitStructureEx.CalAtuoLoadEn   = DISABLE;
+    ADC_InitStructureEx.DifModCal       = false;
+    ADC_InitStructureEx.ResBit          = ADC_CTRL3_RES_12BIT;
+    ADC_InitStructureEx.SampSecondStyle = false;
+    ADC_InitEx(ADCx, &ADC_InitStructureEx);
+    ADC_SetDifChs(ADCx, 0U);
 
     /* Enable ADC */
     ADC_Enable(ADCx, ENABLE);
@@ -713,6 +730,33 @@ uint8_t ADC_Initial(ADC_Module* ADCx)
 
     return 1U;
 }
+
+uint8_t ADC1_Initial(void)
+{
+    if (ADC_ModuleInitial(ADC1) == 0U)
+    {
+        return 0U;
+    }
+
+    /* ADC1 starts on the battery input; PA6 reference is selected when read. */
+    ADC_ConfigRegularChannel(ADC1, ADC1_Channel_04_PA3, 1,
+                             ADC_SAMP_TIME_239CYCLES5);
+    return 1U;
+}
+
+uint8_t ADC2_Initial(void)
+{
+    if (ADC_ModuleInitial(ADC2) == 0U)
+    {
+        return 0U;
+    }
+
+    /* ADC2 has one owner and one input: pressure signal ADC_M on PA2. */
+    ADC_ConfigRegularChannel(ADC2, ADC2_Channel_11_PA2, 1,
+                             ADC_SAMP_TIME_239CYCLES5);
+    return 1U;
+}
+
 uint8_t ADC_DisableSafe(ADC_Module* ADCx)
 {
     uint32_t timeout = 100000U;

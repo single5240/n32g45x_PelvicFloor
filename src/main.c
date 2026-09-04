@@ -182,6 +182,7 @@ typedef enum
 #define BATTERY_REFERENCE_MV              2500U
 #define BATTERY_DIVIDER_GAIN              2U
 #define BATTERY_SAMPLE_IDLE_TICKS         8U
+#define BATTERY_PRESSURE_IDLE_TICKS       48U
 #define BATTERY_ADC_RETRY_TICKS           10U
 #define BATTERY_VALID_MIN_MV              2500U
 #define BATTERY_VALID_MAX_MV              5000U
@@ -193,9 +194,17 @@ typedef enum
 #define BATTERY_LOW_EXIT_MV               3600U
 #define BATTERY_LOW_CONFIRM_COUNT         3U
 
-/* Pressure sensor raw ADC test: PA2 / ADC1 channel 11. */
+/* Pressure sensor: PA2 / ADC2 channel 11. Temporary nominal calibration. */
 #define PRESSURE_ADC_SAMPLE_PERIOD_MS      200U
 #define PRESSURE_ADC_AVERAGE_PERIOD_MS     5000U
+#define PRESSURE_ADC_REFERENCE_MV          3300U
+#define PRESSURE_SENSOR_FULL_SCALE_KPA     40U
+#define PRESSURE_SENSOR_FULL_SCALE_UV      75000U
+#define PRESSURE_AMPLIFIER_GAIN            47U
+#define PRESSURE_MMHG_PER_KPA_X1000        7501U
+#define PRESSURE_ADC_ZERO_CODE             347U
+#define PRESSURE_ADC_ZERO_DEADBAND         12U
+#define PRESSURE_ADC_BATTERY_PAUSE_TICKS   2U
 
 typedef struct
 {
@@ -281,11 +290,13 @@ static KeyFilter_t s_keys[KEY_ID_COUNT];
 static AppEventQueue_t s_event_queue;
 static UiModel_t s_ui;
 static BatteryContext_t s_battery;
+static uint8_t s_pressure_adc_initialized;
 static uint32_t s_pressure_adc_last_sample_ms;
 static uint32_t s_pressure_adc_window_start_ms;
 static uint32_t s_pressure_adc_sample_sum;
 static uint16_t s_pressure_adc_sample_count;
 static uint8_t s_pressure_adc_sampling_active;
+static uint8_t s_pressure_adc_pause_ticks;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -344,7 +355,12 @@ static uint8_t Battery_CalculatePercent(uint16_t voltage_mv);
 static void Battery_UpdateLowState(uint16_t voltage_mv);
 static void Battery_ProcessMeasurement(uint16_t battery_adc,
                                        uint16_t reference_adc);
-static void Battery_Task100ms(void);
+static uint8_t Battery_Task100ms(void);
+static uint16_t Pressure_CalculateMmHg(uint16_t adc_value,
+                                       uint16_t *adc_input_mv,
+                                       uint16_t *sensor_output_uv);
+static uint8_t Pressure_ReadFilteredAdc(uint16_t *adc_value);
+static void Pressure_UpdateLiveValue(uint16_t adc_value);
 static void PressureAdc_Task100ms(void);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码�? */
@@ -453,6 +469,17 @@ static void Pressure_StopOutputs(void)
 	TIM_SetCmp4(TIM4, 0U);
 	TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_DISABLE);
 	SWEN_OFF;
+	BATEN_OFF;
+	s_pressure_adc_sampling_active = 0U;
+	s_pressure_adc_pause_ticks = 0U;
+	if (s_pressure_adc_initialized != 0U)
+	{
+		if (ADC_DisableSafe(ADC2) == 0U)
+		{
+			ADC_DeInit(ADC2);
+		}
+		s_pressure_adc_initialized = 0U;
+	}
 }
 
 /* 初始化应用状态，不在这里执行耗时或阻塞操作 */
@@ -1754,15 +1781,28 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
 			      s_battery.voltage_mv);
 		}
 	}
-	LOG_D("t=%u battery sample, bat_adc=%u ref_adc=%u mv=%u percent=%u",
-	      s_system_tick_ms, battery_adc, reference_adc,
-	      s_battery.voltage_mv, s_battery.percent);
+#if 0 /* 周期性电池日志：联调其他功能时暂时屏蔽。 */
+	if (s_app.state == APP_STATE_PRESSURE)
+	{
+		LOG_I("t=%u battery pressure sample, bat_adc=%u ref_adc=%u mv=%u percent=%u",
+		      s_system_tick_ms, battery_adc, reference_adc,
+		      s_battery.voltage_mv, s_battery.percent);
+	}
+	else
+	{
+		LOG_D("t=%u battery sample, bat_adc=%u ref_adc=%u mv=%u percent=%u",
+		      s_system_tick_ms, battery_adc, reference_adc,
+		      s_battery.voltage_mv, s_battery.percent);
+	}
+#endif
 }
 
-static void Battery_Task100ms(void)
+/* Returns 1 only when ADC1 performed a battery/reference conversion. */
+static uint8_t Battery_Task100ms(void)
 {
 	uint16_t battery_adc;
 	uint16_t reference_adc;
+	uint8_t pressure_mode = (s_app.state == APP_STATE_PRESSURE) ? 1U : 0U;
 	uint8_t working_state = ((s_app.state == APP_STATE_CHARGING) ||
 	                         (s_app.state == APP_STATE_READY) ||
 	                         (s_app.state == APP_STATE_THERAPY) ||
@@ -1775,18 +1815,18 @@ static void Battery_Task100ms(void)
 			BATEN_OFF;
 			s_battery.measurement_pending = 0U;
 		}
-		return;
+		return 0U;
 	}
 
 	if (s_battery.retry_ticks != 0U)
 	{
 		s_battery.retry_ticks--;
-		return;
+		return 0U;
 	}
 
 	if (s_battery.adc_initialized == 0U)
 	{
-		if (ADC_Initial(ADC1) == 0U)
+		if (ADC1_Initial() == 0U)
 		{
 			if (s_battery.error_reported == 0U)
 			{
@@ -1794,7 +1834,7 @@ static void Battery_Task100ms(void)
 				s_battery.error_reported = 1U;
 			}
 			s_battery.retry_ticks = BATTERY_ADC_RETRY_TICKS;
-			return;
+			return 0U;
 		}
 		s_battery.adc_initialized = 1U;
 		LOG_I("t=%u battery ADC initialized", s_system_tick_ms);
@@ -1825,43 +1865,199 @@ static void Battery_Task100ms(void)
 			s_battery.retry_ticks = BATTERY_ADC_RETRY_TICKS;
 		}
 
-		BATEN_OFF;
+		if (pressure_mode == 0U)
+		{
+			BATEN_OFF;
+		}
+		else
+		{
+			BATEN_ON;
+		}
 		s_battery.measurement_pending = 0U;
-		s_battery.next_sample_ticks = BATTERY_SAMPLE_IDLE_TICKS;
-		return;
+		s_battery.next_sample_ticks = (pressure_mode != 0U) ?
+		                              BATTERY_PRESSURE_IDLE_TICKS :
+		                              BATTERY_SAMPLE_IDLE_TICKS;
+		return 1U;
 	}
 
 	if (s_battery.next_sample_ticks != 0U)
 	{
 		s_battery.next_sample_ticks--;
-		return;
+		return 0U;
 	}
 
 	/* 只在采样前打开分压检测电路，下一�? 100 ms 任务再读取�? */
 	BATEN_ON;
 	s_battery.measurement_pending = 1U;
+	return 0U;
 }
 
 /*
- * Pressure sensor bring-up logging.
- * ADC1 is shared with the battery monitor, so this task runs only after the
- * battery monitor has initialized ADC1 and only while pressure mode is active.
+ * Temporary pressure conversion for the 40 kPa sensor:
+ * 75 mV full-scale sensor output, 47x amplifier gain and 3.3 V ADC reference.
+ * The isolated PA2 samples currently indicate a zero code near 0. Production
+ * calibration must replace this provisional zero-point and sensitivity.
+ */
+static uint16_t Pressure_CalculateMmHg(uint16_t adc_value,
+                                       uint16_t *adc_input_mv,
+                                       uint16_t *sensor_output_uv)
+{
+	uint32_t input_mv;
+	uint32_t signal_mv;
+	uint32_t sensor_uv;
+	uint32_t pressure_kpa_x100;
+	uint32_t pressure_mmhg;
+
+	input_mv = ((uint32_t)adc_value * PRESSURE_ADC_REFERENCE_MV +
+	            (4095U / 2U)) / 4095U;
+	if (adc_input_mv != NULL)
+	{
+		*adc_input_mv = (uint16_t)input_mv;
+	}
+	if (adc_value <= (PRESSURE_ADC_ZERO_CODE + PRESSURE_ADC_ZERO_DEADBAND))
+	{
+		if (sensor_output_uv != NULL)
+		{
+			*sensor_output_uv = 0U;
+		}
+		return 0U;
+	}
+
+	signal_mv = (((uint32_t)(adc_value - PRESSURE_ADC_ZERO_CODE) *
+	              PRESSURE_ADC_REFERENCE_MV) + (4095U / 2U)) / 4095U;
+	sensor_uv = (signal_mv * 1000U + (PRESSURE_AMPLIFIER_GAIN / 2U)) /
+	            PRESSURE_AMPLIFIER_GAIN;
+	pressure_kpa_x100 = (sensor_uv * PRESSURE_SENSOR_FULL_SCALE_KPA * 100U +
+	                      (PRESSURE_SENSOR_FULL_SCALE_UV / 2U)) /
+	                     PRESSURE_SENSOR_FULL_SCALE_UV;
+	pressure_mmhg = (pressure_kpa_x100 * PRESSURE_MMHG_PER_KPA_X1000 + 50000U) /
+	                 100000U;
+
+	if (sensor_output_uv != NULL)
+	{
+		*sensor_output_uv = (uint16_t)sensor_uv;
+	}
+	if (pressure_mmhg > 999U)
+	{
+		return 999U;
+	}
+
+	return (uint16_t)pressure_mmhg;
+}
+
+/*
+ * Pressure uses ADC2 exclusively. Discard the first result after selecting
+ * PA2, then use the median of three retained conversions so one disturbed
+ * conversion cannot become a displayed pressure.
+ */
+static uint8_t Pressure_ReadFilteredAdc(uint16_t *adc_value)
+{
+	uint16_t sample_a;
+	uint16_t sample_b;
+	uint16_t sample_c;
+	uint16_t temporary;
+
+	if (adc_value == NULL)
+	{
+		return 0U;
+	}
+
+	if (ADC_GetData(ADC2, ADC2_Channel_11_PA2, &temporary) == 0U)
+	{
+		return 0U;
+	}
+	if (ADC_GetData(ADC2, ADC2_Channel_11_PA2, &sample_a) == 0U)
+	{
+		return 0U;
+	}
+	if (ADC_GetData(ADC2, ADC2_Channel_11_PA2, &sample_b) == 0U)
+	{
+		return 0U;
+	}
+	if (ADC_GetData(ADC2, ADC2_Channel_11_PA2, &sample_c) == 0U)
+	{
+		return 0U;
+	}
+
+	if (sample_a > sample_b)
+	{
+		temporary = sample_a;
+		sample_a = sample_b;
+		sample_b = temporary;
+	}
+	if (sample_b > sample_c)
+	{
+		temporary = sample_b;
+		sample_b = sample_c;
+		sample_c = temporary;
+	}
+	if (sample_a > sample_b)
+	{
+		sample_b = sample_a;
+	}
+
+	*adc_value = sample_b;
+	return 1U;
+}
+
+/* This is the live display path; it must not depend on debug logging. */
+static void Pressure_UpdateLiveValue(uint16_t adc_value)
+{
+	uint16_t pressure_mmhg = Pressure_CalculateMmHg(adc_value, NULL, NULL);
+
+	if (pressure_mmhg == s_ui.pressure_value)
+	{
+		return;
+	}
+
+	s_ui.pressure_value = pressure_mmhg;
+	s_ui.pressure_result_blink = 0U;
+	s_app.ui_dirty = 1U;
+	LOG_I("t=%u pressure live adc=%u pressure=%u mmHg", s_system_tick_ms,
+	      adc_value, pressure_mmhg);
+}
+
+/*
+ * ADC2 is dedicated to pressure sampling; ADC1 remains owned by the battery.
  */
 static void PressureAdc_Task100ms(void)
 {
 	uint32_t now = s_system_tick_ms;
 	uint16_t raw_value;
-	uint16_t average_value;
 
-	if ((s_app.state != APP_STATE_PRESSURE) ||
-	    (s_battery.adc_initialized == 0U))
+	if (s_app.state != APP_STATE_PRESSURE)
 	{
 		s_pressure_adc_sampling_active = 0U;
+		s_pressure_adc_pause_ticks = 0U;
 		s_pressure_adc_last_sample_ms = now;
 		s_pressure_adc_window_start_ms = now;
 		s_pressure_adc_sample_sum = 0U;
 		s_pressure_adc_sample_count = 0U;
 		return;
+	}
+
+	/*
+	 * The pressure front end follows BATEN on the target board. Keep it enabled
+	 * for the complete pressure session; periodic battery pulses modulate PA2.
+	 */
+	BATEN_ON;
+
+	if (s_pressure_adc_pause_ticks != 0U)
+	{
+		s_pressure_adc_pause_ticks--;
+		s_pressure_adc_last_sample_ms = now;
+		return;
+	}
+
+	if (s_pressure_adc_initialized == 0U)
+	{
+		if (ADC2_Initial() == 0U)
+		{
+			LOG_E("t=%u pressure ADC2 init failed", now);
+			return;
+		}
+		s_pressure_adc_initialized = 1U;
+		LOG_I("t=%u pressure ADC2 initialized", now);
 	}
 
 	if (s_pressure_adc_sampling_active == 0U)
@@ -1890,15 +2086,16 @@ static void PressureAdc_Task100ms(void)
 		s_pressure_adc_last_sample_ms += PRESSURE_ADC_SAMPLE_PERIOD_MS;
 	}
 
-	/* ADC1 may have just switched from battery PA3/PA6; discard PA2 first conversion. */
-	if (ADC_GetData(ADC1, ADC1_Channel_11_PA2, &raw_value) == 0U)
+	if (Pressure_ReadFilteredAdc(&raw_value) == 0U)
 	{
+		if (ADC_DisableSafe(ADC2) == 0U)
+		{
+			ADC_DeInit(ADC2);
+		}
+		s_pressure_adc_initialized = 0U;
 		return;
 	}
-	if (ADC_GetData(ADC1, ADC1_Channel_11_PA2, &raw_value) == 0U)
-	{
-		return;
-	}
+	Pressure_UpdateLiveValue(raw_value);
 	s_pressure_adc_sample_sum += raw_value;
 	s_pressure_adc_sample_count++;
 
@@ -1908,11 +2105,23 @@ static void PressureAdc_Task100ms(void)
 		return;
 	}
 
-	average_value = (uint16_t)((s_pressure_adc_sample_sum +
-	                            (s_pressure_adc_sample_count / 2U)) /
-	                           s_pressure_adc_sample_count);
-	LOG_I("t=%u pressure adc avg=%u samples=%u", now, average_value,
-	      s_pressure_adc_sample_count);
+#if 0 /* 周期性压力统计日志：联调其他功能时暂时屏蔽。 */
+	{
+		uint16_t average_value;
+		uint16_t adc_input_mv;
+		uint16_t sensor_output_uv;
+		uint16_t pressure_mmhg;
+
+		average_value = (uint16_t)((s_pressure_adc_sample_sum +
+		                            (s_pressure_adc_sample_count / 2U)) /
+		                           s_pressure_adc_sample_count);
+		pressure_mmhg = Pressure_CalculateMmHg(average_value, &adc_input_mv,
+		                                       &sensor_output_uv);
+		LOG_I("t=%u pressure adc=%u adc_mv=%u sensor_uv=%u pressure=%u mmHg samples=%u",
+		      now, average_value, adc_input_mv, sensor_output_uv, pressure_mmhg,
+		      s_pressure_adc_sample_count);
+	}
+#endif
 
 	s_pressure_adc_window_start_ms = now;
 	s_pressure_adc_sample_sum = 0U;
@@ -2156,7 +2365,11 @@ static void Ui_Task50ms(void)
 
 static void Sensor_Task100ms(void)
 {
-	Battery_Task100ms();
+	if ((Battery_Task100ms() != 0U) &&
+	    (s_app.state == APP_STATE_PRESSURE))
+	{
+		s_pressure_adc_pause_ticks = PRESSURE_ADC_BATTERY_PAUSE_TICKS;
+	}
 	PressureAdc_Task100ms();
 }
 
