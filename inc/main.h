@@ -142,6 +142,15 @@ extern "C" {
 #define CONST_TIMES				68
 #define Open_Ch  300
 
+#define TREATMENT_PULSE_MODE_COUNT  3U
+#define TREATMENT_CHANNEL_1         0U
+#define TREATMENT_CHANNEL_2         1U
+/* Bench-test switch: keep both DAC outputs at the safe zero value by default. */
+#define TREATMENT_DAC_OUTPUT_ENABLE 0U
+
+void TreatmentPulse_SetMode(uint8_t mode);
+void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
+
 
 
 typedef enum

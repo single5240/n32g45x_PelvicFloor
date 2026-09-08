@@ -102,7 +102,7 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AIN;
     GPIO_InitPeripheral(GPIOA, &GPIO_InitStructure);
 
-		GPIO_InitStructure.Pin       = IN1L_PIN|IN1R_PIN|IN2L_PIN;/* TIM1_CH1, CH2, CH1N */
+		GPIO_InitStructure.Pin       = IN1L_PIN|IN1R_PIN|IN2L_PIN;/* Initial treatment pin assignment. */
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitPeripheral(GPIOA, &GPIO_InitStructure);
@@ -124,7 +124,7 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPD;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 		
-		/* Treatment PWM output: TIM8_CH2N. */
+		/* Initial treatment pin assignment. */
 		GPIO_InitStructure.Pin       = IN2R_PIN;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
@@ -169,20 +169,18 @@ void TIM1_Configuration(void)
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
     OCInitType TIM_OCInitStructure;
     /* Time base configuration */
-	TIM_TimeBaseStructure.Period    = 9999;/* 16 MHz / 10000 = 1600 Hz; alternating L/R gives 800 Hz biphasic groups */
+	TIM_TimeBaseStructure.Period    = 7999;////way1:2kHZ
     TIM_TimeBaseStructure.Prescaler = 7;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_DOWN;
     TIM_TimeBaseStructure.RepetCnt  = 0;
 
     TIM_InitTimeBase(TIM1, &TIM_TimeBaseStructure);
-    TIM_ConfigArPreload(TIM1, ENABLE);
-
     /* PWM1 Mode configuration: Channel1 *////1L
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM2;/* 300 us pulse at the end of each 625 us slot. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;///输出使能
-    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = 4800;/* 300 us at 16 MHz */
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
+    TIM_OCInitStructure.Pulse        = 7800;
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -191,10 +189,10 @@ void TIM1_Configuration(void)
     TIM_InitOc1(TIM1, &TIM_OCInitStructure);
 
     /* PWM1 Mode configuration: Channel2 *////1R
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM2;
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_ENABLE;///输出使能
-    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = 4800;/* 300 us at 16 MHz */
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
+    TIM_OCInitStructure.Pulse        = 7800;
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -202,21 +200,16 @@ void TIM1_Configuration(void)
 
     TIM_InitOc2(TIM1, &TIM_OCInitStructure);
 
-    /* TIM1 enable update irq */
-    
+	/* TIM1 enable update irq */
 	TIM_EnableCtrlPwmOutputs(TIM1, ENABLE);
-    /* TIM1 enable counter */
-    
+	/* TIM1 enable counter */
 	TIM_ConfigInt(TIM1, TIM_INT_UPDATE, ENABLE);
-	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
 	TIM_Enable(TIM1, ENABLE);
     
 }
 /**
  * @brief  Configures tim8 clocks.
  */
-#if 0 /* Legacy TIM8 treatment output; replaced by TIM1 CH1/CH1N and CH2/CH2N. */
 void TIM8_Configuration(void)
 {
     TIM_TimeBaseInitType TIM_TimeBaseStructure;
@@ -260,39 +253,6 @@ void TIM8_Configuration(void)
     /* TIM8 enable counter */
     TIM_Enable(TIM8, ENABLE);
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
-}
-#endif
-
-/* TIM8 schedules the second treatment bridge (IN2L/IN2R). */
-void TIM8_Configuration(void)
-{
-    TIM_TimeBaseInitType time_base;
-    OCInitType oc_init;
-
-    time_base.Period    = 9999U;
-    time_base.Prescaler = 7U;
-    time_base.ClkDiv    = 0U;
-    time_base.CntMode   = TIM_CNT_MODE_DOWN;
-    time_base.RepetCnt  = 0U;
-    TIM_InitTimeBase(TIM8, &time_base);
-    TIM_ConfigArPreload(TIM8, ENABLE);
-
-    oc_init.OcMode       = TIM_OCMODE_PWM2;
-    oc_init.OutputState  = TIM_OUTPUT_STATE_DISABLE;
-    oc_init.OutputNState = TIM_OUTPUT_NSTATE_ENABLE;
-    oc_init.Pulse        = 4800U;
-    oc_init.OcPolarity   = TIM_OC_POLARITY_HIGH;
-    oc_init.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
-    oc_init.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
-    oc_init.OcNIdleState = TIM_OC_IDLE_STATE_RESET;
-    TIM_InitOc1(TIM8, &oc_init);
-    TIM_InitOc2(TIM8, &oc_init);
-
-    TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
-    TIM_ConfigInt(TIM8, TIM_INT_UPDATE, ENABLE);
-    TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
-    TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
-    TIM_Enable(TIM8, ENABLE);
 }
 
 //void TIM3_Configuration(void)////通用定时�?
@@ -569,8 +529,9 @@ void DAC_ChannelConfig(void)
     DAC_Enable(DAC_CHANNEL_1, ENABLE);
     DAC_Enable(DAC_CHANNEL_2, ENABLE);
     /* Set DAC Channel1 DHR12L register */
-    DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 4090);
-    DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 4090);//900
+    /* Keep treatment amplitude disabled until explicitly enabled for bench test. */
+    DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
+    DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
 }
 
 //void E1countExtiInit(void)

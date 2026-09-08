@@ -71,15 +71,16 @@ uint8_t Ch_Flag = 0;  ////通道标志�?0:A通道�?1：B通道
 uint8_t WorkType = 0; /////0：治疗模式，1：检测模�?
 uint8_t Formula = 0;  ////处方0,1,2�?
 uint8_t Ico_Formula = 0;
-uint8_t Pwr1 = 0; /////0-60档强�?
-uint8_t Pwr2 = 0;
-volatile uint8_t TreatmentPwmEnableCh1 = 0U;
-volatile uint8_t TreatmentPwmEnableCh2 = 0U;
+volatile uint8_t Pwr1 = 0; /////0-60档强�?
+volatile uint8_t Pwr2 = 0;
 uint16_t Press_Value = 0; /// 压力�?
 uint16_t Buzz_cnt = 0;	  /// 蜂鸣器时�?
 uint8_t Flash_Flag = 0;	  ////闪烁标志�?
 uint8_t Charg_Flag = 0;	  ////充电中标志位
 uint8_t Chargok_Flag = 1; ////充满电标志位
+
+volatile uint16_t Tim1_Count = 0U;
+volatile uint16_t Tim8_Count = 0U;
 
 
 uint8_t Mode_Change = 0;
@@ -457,14 +458,14 @@ static void Treatment_StopOutputs(void)
 	s_ui.power_ch2 = 0U;
 	Pwr1 = 0U;
 	Pwr2 = 0U;
-	TreatmentPwmEnableCh1 = 0U;
-	TreatmentPwmEnableCh2 = 0U;
+	Tim1_Count = 0U;
+	Tim8_Count = 0U;
 
-	/* Keep the hardware 300 us compare value ready for the next treatment. */
-	TIM_SetCmp1(TIM1, 4800U);
-	TIM_SetCmp2(TIM1, 4800U);
-	TIM_SetCmp1(TIM8, 4800U);
-	TIM_SetCmp2(TIM8, 4800U);
+	/* Keep the initial pulse scheme's compare value ready for the next treatment. */
+	TIM_SetCmp1(TIM1, 7800U);
+	TIM_SetCmp2(TIM1, 7800U);
+	TIM_SetCmp1(TIM8, 7800U);
+	TIM_SetCmp2(TIM8, 7800U);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
@@ -1119,9 +1120,11 @@ static void App_HandleEvent(AppEvent_t event)
 			Ui_Beep(1U);
 			if (s_app.state == APP_STATE_THERAPY)
 			{
-				s_ui.formula = (uint8_t)((s_ui.formula + 1U) % 3U);
-				s_ui.power_ch1 = 0U;
-				s_ui.power_ch2 = 0U;
+				uint8_t next_formula = (uint8_t)((s_ui.formula + 1U) %
+				                                 TREATMENT_PULSE_MODE_COUNT);
+				Treatment_StopOutputs();
+				s_ui.formula = next_formula;
+				TreatmentPulse_SetMode(next_formula);
 				LOG_I("t=%u formula=P%u, power reset", s_system_tick_ms,
 				      (uint8_t)(s_ui.formula + 1U));
 			}
@@ -1195,8 +1198,9 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power) = UI_MAX_POWER;
 				}
-				LOG_I("t=%u power ch1=%u ch2=%u", s_system_tick_ms,
-				      s_ui.power_ch1, s_ui.power_ch2);
+				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=OFF",
+				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
+				      (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
 			}
 			break;
@@ -1215,8 +1219,9 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power) = 0;
 				}
-				LOG_I("t=%u power ch1=%u ch2=%u", s_system_tick_ms,
-				      s_ui.power_ch1, s_ui.power_ch2);
+				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=OFF",
+				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
+				      (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
 			}
 			break;
@@ -1231,6 +1236,7 @@ static void Ui_InitModel(void)
 	/* LCD/蜂鸣器初始化标志保留，其他字段恢复默认交互状态�? */
 	s_ui.selected_channel = 0U;
 	s_ui.formula = 0U;
+	TreatmentPulse_SetMode(s_ui.formula);
 	s_ui.power_ch1 = 0U;
 	s_ui.power_ch2 = 0U;
 	s_ui.set_minutes = 30U;
@@ -2372,40 +2378,56 @@ static void Control_Task10ms(void)
 {
 	static uint8_t previous_pwr1;
 	static uint8_t previous_pwr2;
+	uint8_t output_allowed;
+	uint8_t requested_pwr1;
+	uint8_t requested_pwr2;
 
 	Ui_BuzzerTask10ms();
 
-	/* PWM-only treatment: each nonzero UI level enables its own channel.
-	 * The countdown and state checks are the common safety interlock. */
-	TreatmentPwmEnableCh1 = ((s_app.state == APP_STATE_THERAPY) &&
-	                        ((s_ui.remaining_minutes != 0U) ||
-	                         (s_ui.remaining_seconds != 0U)) &&
-	                        (s_ui.power_ch1 != 0U)) ? 1U : 0U;
-	TreatmentPwmEnableCh2 = ((s_app.state == APP_STATE_THERAPY) &&
-	                        ((s_ui.remaining_minutes != 0U) ||
-	                         (s_ui.remaining_seconds != 0U)) &&
-	                        (s_ui.power_ch2 != 0U)) ? 1U : 0U;
+	/* Feed the current UI level into the initial pulse/envelope implementation.
+	 * The countdown and state checks remain the common safety interlock. */
+	output_allowed = ((s_app.state == APP_STATE_THERAPY) &&
+	                  ((s_ui.remaining_minutes != 0U) ||
+	                   (s_ui.remaining_seconds != 0U))) ? 1U : 0U;
+	requested_pwr1 = (output_allowed != 0U) ? s_ui.power_ch1 : 0U;
+	requested_pwr2 = (output_allowed != 0U) ? s_ui.power_ch2 : 0U;
 
-	if ((previous_pwr1 == 0U) && (TreatmentPwmEnableCh1 != 0U))
+	if ((Pwr1 == 0U) && (requested_pwr1 != 0U))
 	{
-		LOG_I("t=%u treatment ch1 pulse start", s_system_tick_ms);
+		TreatmentPulse_PrepareChannel(TREATMENT_CHANNEL_1, s_ui.formula);
 	}
-	else if ((previous_pwr1 != 0U) && (TreatmentPwmEnableCh1 == 0U))
+	if ((Pwr2 == 0U) && (requested_pwr2 != 0U))
 	{
-		LOG_I("t=%u treatment ch1 pulse stop", s_system_tick_ms);
+		TreatmentPulse_PrepareChannel(TREATMENT_CHANNEL_2, s_ui.formula);
 	}
 
-	if ((previous_pwr2 == 0U) && (TreatmentPwmEnableCh2 != 0U))
+	Pwr1 = requested_pwr1;
+	Pwr2 = requested_pwr2;
+
+	if ((previous_pwr1 == 0U) && (Pwr1 != 0U))
 	{
-		LOG_I("t=%u treatment ch2 pulse start", s_system_tick_ms);
+		LOG_I("t=%u treatment start ch=1 mode=P%u level=%u timer=TIM1 pins=PA8/PA9 dac=OFF",
+		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U), Pwr1);
 	}
-	else if ((previous_pwr2 != 0U) && (TreatmentPwmEnableCh2 == 0U))
+	else if ((previous_pwr1 != 0U) && (Pwr1 == 0U))
 	{
-		LOG_I("t=%u treatment ch2 pulse stop", s_system_tick_ms);
+		LOG_I("t=%u treatment stop ch=1 mode=P%u timer=TIM1 dac=OFF",
+		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U));
 	}
 
-	previous_pwr1 = TreatmentPwmEnableCh1;
-	previous_pwr2 = TreatmentPwmEnableCh2;
+	if ((previous_pwr2 == 0U) && (Pwr2 != 0U))
+	{
+		LOG_I("t=%u treatment start ch=2 mode=P%u level=%u timer=TIM8 pins=PA7/PB0 dac=OFF",
+		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U), Pwr2);
+	}
+	else if ((previous_pwr2 != 0U) && (Pwr2 == 0U))
+	{
+		LOG_I("t=%u treatment stop ch=2 mode=P%u timer=TIM8 dac=OFF",
+		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U));
+	}
+
+	previous_pwr1 = Pwr1;
+	previous_pwr2 = Pwr2;
 
 	if ((s_app.state == APP_STATE_PRESSURE) &&
 	    (s_ui.pressure_action != PRESSURE_ACTION_IDLE) &&
