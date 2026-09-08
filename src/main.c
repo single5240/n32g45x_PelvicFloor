@@ -414,6 +414,7 @@ static void Board_Init(void)
 	DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
 	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
 	TIM6_Configuration();
+	TIM_Enable(TIM6, ENABLE);
 	TIM1_Configuration();
 	TIM8_Configuration();
 	TIM4_Configuration();

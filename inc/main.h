@@ -145,8 +145,8 @@ extern "C" {
 #define TREATMENT_PULSE_MODE_COUNT  3U
 #define TREATMENT_CHANNEL_1         0U
 #define TREATMENT_CHANNEL_2         1U
-/* Bench-test switch: keep both DAC outputs at the safe zero value by default. */
-#define TREATMENT_DAC_OUTPUT_ENABLE 0U
+/* 台架验证：启用初始提交中的双通道 DAC 包络输出。 */
+#define TREATMENT_DAC_OUTPUT_ENABLE 1U
 
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
