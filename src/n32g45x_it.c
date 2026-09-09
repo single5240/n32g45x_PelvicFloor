@@ -222,39 +222,6 @@ void SysTick_Handler(void)
 /*void PPP_IRQHandler(void)
 {
 }*/
-#if 0 /* Bluetooth receive parser removed */
-void USART2_IRQHandler(void)
-{
-	if (USART_GetIntStatus(USART2, USART_INT_RXDNE) != RESET)
-	{
-		/*防止数据溢出*/
-		if (Receive2_Count >= MAX_BUFFER_SIZE)
-		{
-			Receive2_Count = 0; // 溢出时重置
-		}
-
-		/*读取数据*/
-		BEL_ReadData[Receive2_Count++] = USART_ReceiveData(USART2);
-		Receive2_Time = 0;
-		if (BEL_ReadData[0] != 0x5a)
-		{
-			Receive2_Count = 0;
-		}
-		/*检查帧头*/
-		if (Receive2_Count >= 6 && BEL_ReadData[0] == 0x5a && BEL_ReadData[1] == 0xa5)
-		{
-
-			checksum = BLE_Checksum(BEL_ReadData, Receive2_Count);
-			/*校验帧数据*/
-			if (BEL_ReadData[Receive2_Count - 1] == checksum)
-			{
-				BEL_Flag = 1;
-			}
-			Receive2_Count = 0; /*处理完成重置缓冲区*/
-		}
-	}
-}
-#endif
 void USART2_IRQHandler(void)
 {
     if (USART_GetIntStatus(USART2, USART_INT_RXDNE) != RESET)

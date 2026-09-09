@@ -467,6 +467,11 @@
               <FilePath>..\src\main.c</FilePath>
             </File>
             <File>
+              <FileName>ble_protocol.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\src\ble_protocol.c</FilePath>
+            </File>
+            <File>
               <FileName>n32g45x_it.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\src\n32g45x_it.c</FilePath>

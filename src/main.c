@@ -33,6 +33,7 @@
  * @copyright Copyright (c) 2019, Nations Technologies Inc. All rights reserved.
  */
 #include "main.h"
+#include "ble_protocol.h"
 
 #define DBG_TAG "SYS"
 #define DBG_LVL DBG_INFO
@@ -148,6 +149,40 @@ typedef enum
 	APP_EVENT_CHARGER_CONNECTED,
 	APP_EVENT_CHARGER_DISCONNECTED
 } AppEvent_t;
+
+#define APP_STATE_MASK(state)             ((uint8_t)(1U << (uint8_t)(state)))
+#define BLE_ACTION_FLAG_POWER_OFF_LOCK    0x01U
+#define BLE_ACTION_FLAG_TREATMENT_DANGER  0x02U
+#define BLE_ACTION_FLAG_PRESSURE_DANGER   0x04U
+
+typedef struct
+{
+	uint8_t action;
+	AppEvent_t event;
+	uint8_t allowed_states;
+	uint8_t flags;
+} BleActionEntry_t;
+
+static const BleActionEntry_t s_ble_action_table[] =
+{
+	{1U, APP_EVENT_POWER_SHORT,
+	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
+	 BLE_ACTION_FLAG_TREATMENT_DANGER},
+	{2U, APP_EVENT_POWER_LONG,
+	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
+	 BLE_ACTION_FLAG_POWER_OFF_LOCK},
+	{3U, APP_EVENT_FUNCTION_SHORT,
+	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE), 0U},
+	{4U, APP_EVENT_START_SHORT,
+	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
+	 BLE_ACTION_FLAG_PRESSURE_DANGER},
+	{5U, APP_EVENT_START_LONG,
+	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
+	 BLE_ACTION_FLAG_PRESSURE_DANGER},
+	{6U, APP_EVENT_PLUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY),
+	 BLE_ACTION_FLAG_TREATMENT_DANGER},
+	{7U, APP_EVENT_MINUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY), 0U}
+};
 
 typedef enum
 {
@@ -328,10 +363,7 @@ typedef struct
 	uint8_t tx_index;
 	uint8_t line_length;
 	uint8_t set_attempts;
-	uint8_t diagnostic_sample[8U];
-	uint8_t diagnostic_sample_length;
-	uint32_t diagnostic_rx_count;
-	uint32_t diagnostic_last_log_ms;
+	uint8_t protocol_active;
 	char line[BLE_AT_LINE_SIZE];
 	char mac[BLE_MAC_TEXT_LENGTH + 1U];
 	char desired_name[BLE_NAME_LENGTH + 1U];
@@ -359,6 +391,8 @@ static uint16_t s_pressure_adc_sample_count;
 static uint8_t s_pressure_adc_sampling_active;
 static uint8_t s_pressure_adc_pause_ticks;
 static PressureAction_t s_pressure_output_action;
+static uint8_t s_ble_pending_remote_danger;
+static uint8_t s_ble_remote_danger_active;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -432,7 +466,15 @@ static void BleName_SendCommand(const char *command, uint8_t length,
                                 BleNameState_t wait_state);
 static void BleName_ProcessLine(void);
 static uint8_t BleName_IsHex(char value);
-static void BleDataDiagnostic_Task10ms(void);
+static void BleProtocol_RxTask10ms(void);
+static void BleProtocol_TxTask(void);
+static void BleProtocol_StopAll(void);
+static BleProtocolResult_t BleProtocol_UiAction(uint8_t action);
+static void BleProtocol_LinkState(uint8_t connected);
+static void BleProtocol_RemoteDangerTimeout(void);
+static void BleProtocol_UpdateRemoteDanger(void);
+static void BleProtocol_GetStatus(uint32_t now_ms,
+	                              uint8_t status[BLE_PROTOCOL_STATUS_LENGTH]);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码�? */
 void AppUi_SetBleConnected(uint8_t connected);
@@ -612,6 +654,8 @@ static void Pressure_ApplyOutputs(void)
 /* 初始化应用状态，不在这里执行耗时或阻塞操作 */
 static void App_Init(void)
 {
+	BleProtocolCallbacks_t ble_callbacks;
+
 	s_app.state = APP_STATE_POWER_OFF;
 	s_app.next_state = APP_STATE_POWER_OFF;
 	s_app.ui_dirty = 1U;
@@ -624,6 +668,12 @@ static void App_Init(void)
 	Ui_InitModel();
 	Battery_InitModel();
 	Key_Init();
+	ble_callbacks.stop_all = BleProtocol_StopAll;
+	ble_callbacks.ui_action = BleProtocol_UiAction;
+	ble_callbacks.link_state = BleProtocol_LinkState;
+	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
+	ble_callbacks.get_status = BleProtocol_GetStatus;
+	BleProtocol_Init(&ble_callbacks);
 
 	s_event_queue.read_index = 0U;
 	s_event_queue.write_index = 0U;
@@ -652,6 +702,8 @@ static void App_Init(void)
 /* 主循环的一次调度：每个任务必须快速返回，禁止在任务内部长时间 Delay�? */
 static void App_RunOnce(void)
 {
+	BleProtocol_TxTask();
+
 	if (Scheduler_IsDue(&s_scheduler.last_10ms, 10U))
 	{
 		Input_Task10ms();
@@ -659,6 +711,8 @@ static void App_RunOnce(void)
 		AppEvent_Task10ms();
 		App_ApplyStateTransition();
 		Control_Task10ms();
+		BleProtocol_UpdateRemoteDanger();
+		BleProtocol_CompleteUiAction(s_system_tick_ms);
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_50ms, 50U))
@@ -2469,12 +2523,13 @@ static void BleName_Stop(void)
 	s_ble_name.tx_index = 0U;
 	s_ble_name.line_length = 0U;
 	s_ble_name.set_attempts = 0U;
-	s_ble_name.diagnostic_sample_length = 0U;
-	s_ble_name.diagnostic_rx_count = 0U;
-	s_ble_name.diagnostic_last_log_ms = s_system_tick_ms;
+	s_ble_name.protocol_active = 0U;
+	s_ble_pending_remote_danger = 0U;
+	s_ble_remote_danger_active = 0U;
 	s_ble_name.deadline_ms = 0U;
 	s_ble_rx_read_index = s_ble_rx_write_index;
 	s_ble_rx_overflow = 0U;
+	BleProtocol_Reset();
 }
 
 static void BleName_Start(void)
@@ -2615,7 +2670,7 @@ static void BleName_ProcessLine(void)
 	}
 }
 
-static void BleDataDiagnostic_Task10ms(void)
+static void BleProtocol_RxTask10ms(void)
 {
 	uint8_t data;
 
@@ -2623,8 +2678,7 @@ static void BleDataDiagnostic_Task10ms(void)
 	{
 		s_ble_rx_overflow = 0U;
 		s_ble_rx_read_index = s_ble_rx_write_index;
-		s_ble_name.diagnostic_sample_length = 0U;
-		s_ble_name.diagnostic_rx_count = 0U;
+		BleProtocol_Reset();
 		LOG_W("t=%u BLE data RX overflow", s_system_tick_ms);
 		return;
 	}
@@ -2634,28 +2688,175 @@ static void BleDataDiagnostic_Task10ms(void)
 		data = s_ble_rx_buffer[s_ble_rx_read_index];
 		s_ble_rx_read_index =
 			(uint8_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
-		s_ble_name.diagnostic_rx_count++;
-		if (s_ble_name.diagnostic_sample_length <
-		    (uint8_t)sizeof(s_ble_name.diagnostic_sample))
+		BleProtocol_InputByte(data, s_system_tick_ms);
+	}
+	BleProtocol_Task(s_system_tick_ms);
+}
+
+static void BleProtocol_TxTask(void)
+{
+	uint8_t data;
+
+	if ((s_ble_name.protocol_active == 0U) ||
+	    (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) == RESET))
+	{
+		return;
+	}
+	if (BleProtocol_ReadTxByte(&data) != 0U)
+	{
+		USART_SendData(USART2, data);
+	}
+}
+
+static void BleProtocol_StopAll(void)
+{
+	Treatment_StopOutputs();
+	Pressure_StopOutputs();
+	s_ble_pending_remote_danger = 0U;
+	s_ble_remote_danger_active = 0U;
+	BleProtocol_SetRemoteDangerActive(0U);
+	s_app.ui_dirty = 1U;
+	LOG_W("t=%u BLE STOP_ALL applied", s_system_tick_ms);
+}
+
+static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
+{
+	uint8_t index;
+	uint8_t dangerous_request = 0U;
+	const BleActionEntry_t *entry = 0;
+
+	for (index = 0U;
+	     index < (uint8_t)(sizeof(s_ble_action_table) /
+	                       sizeof(s_ble_action_table[0]));
+	     index++)
+	{
+		if (s_ble_action_table[index].action == action)
 		{
-			s_ble_name.diagnostic_sample[s_ble_name.diagnostic_sample_length++] = data;
+			entry = &s_ble_action_table[index];
+			break;
 		}
 	}
-
-	if ((s_ble_name.diagnostic_rx_count != 0U) &&
-	    ((uint32_t)(s_system_tick_ms - s_ble_name.diagnostic_last_log_ms) >= 1000U))
+	if (entry == 0)
 	{
-		LOG_I("t=%u BLE RX bytes=%u sample[%u]=%02X %02X %02X %02X %02X %02X %02X %02X",
-		      s_system_tick_ms, s_ble_name.diagnostic_rx_count,
-		      s_ble_name.diagnostic_sample_length,
-		      s_ble_name.diagnostic_sample[0], s_ble_name.diagnostic_sample[1],
-		      s_ble_name.diagnostic_sample[2], s_ble_name.diagnostic_sample[3],
-		      s_ble_name.diagnostic_sample[4], s_ble_name.diagnostic_sample[5],
-		      s_ble_name.diagnostic_sample[6], s_ble_name.diagnostic_sample[7]);
-		s_ble_name.diagnostic_rx_count = 0U;
-		s_ble_name.diagnostic_sample_length = 0U;
-		s_ble_name.diagnostic_last_log_ms = s_system_tick_ms;
+		return BLE_RESULT_BAD_PARAMETER;
 	}
+	if ((entry->allowed_states & APP_STATE_MASK(s_app.state)) == 0U)
+	{
+		return BLE_RESULT_STATE_CONFLICT;
+	}
+	if ((entry->flags & BLE_ACTION_FLAG_POWER_OFF_LOCK) != 0U)
+	{
+		return BLE_RESULT_SAFETY_LOCK;
+	}
+	if (((entry->flags & BLE_ACTION_FLAG_TREATMENT_DANGER) != 0U) &&
+	    ((action == 6U) || (Pwr1 != 0U) || (Pwr2 != 0U)))
+	{
+		dangerous_request = 1U;
+#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE == 0U)
+		return BLE_RESULT_SAFETY_LOCK;
+#endif
+	}
+	if (((entry->flags & BLE_ACTION_FLAG_PRESSURE_DANGER) != 0U) &&
+	    (s_app.state == APP_STATE_PRESSURE))
+	{
+		dangerous_request = 1U;
+#if (BLE_REMOTE_PRESSURE_CONTROL_ENABLE == 0U)
+		return BLE_RESULT_SAFETY_LOCK;
+#endif
+	}
+	if (dangerous_request != 0U)
+	{
+		if (s_ui.charger_connected != 0U)
+		{
+			return BLE_RESULT_CHARGING_LOCK;
+		}
+		if (BleProtocol_IsHeartbeatValid(s_system_tick_ms) == 0U)
+		{
+			return BLE_RESULT_SAFETY_LOCK;
+		}
+	}
+	if (EventQueue_Push(entry->event) == 0U)
+	{
+		return BLE_RESULT_BUSY;
+	}
+	s_ble_pending_remote_danger = dangerous_request;
+	return BLE_RESULT_OK;
+}
+
+static void BleProtocol_LinkState(uint8_t connected)
+{
+	AppUi_SetBleConnected(connected);
+}
+
+static void BleProtocol_RemoteDangerTimeout(void)
+{
+	Treatment_StopOutputs();
+	Pressure_StopOutputs();
+	s_ble_pending_remote_danger = 0U;
+	s_ble_remote_danger_active = 0U;
+	s_app.ui_dirty = 1U;
+	LOG_W("t=%u BLE heartbeat timeout, dangerous outputs stopped",
+	      s_system_tick_ms);
+}
+
+static void BleProtocol_UpdateRemoteDanger(void)
+{
+	uint8_t outputs_active = ((Pwr1 != 0U) || (Pwr2 != 0U) ||
+	                          (s_ui.pressure_action != PRESSURE_ACTION_IDLE)) ?
+	                         1U : 0U;
+
+	if (s_ble_pending_remote_danger != 0U)
+	{
+		s_ble_remote_danger_active = outputs_active;
+		s_ble_pending_remote_danger = 0U;
+	}
+	else if ((s_ble_remote_danger_active != 0U) && (outputs_active == 0U))
+	{
+		s_ble_remote_danger_active = 0U;
+	}
+	BleProtocol_SetRemoteDangerActive(s_ble_remote_danger_active);
+}
+
+static void BleProtocol_GetStatus(uint32_t now_ms,
+	                              uint8_t status[BLE_PROTOCOL_STATUS_LENGTH])
+{
+	uint8_t flags = 0U;
+
+	status[0] = (uint8_t)s_app.state;
+	status[1] = s_ui.formula;
+	status[2] = s_ui.selected_channel;
+	status[3] = s_ui.power_ch1;
+	status[4] = s_ui.power_ch2;
+	status[5] = s_ui.set_minutes;
+	status[6] = s_ui.remaining_minutes;
+	status[7] = s_ui.remaining_seconds;
+	status[8] = (uint8_t)s_ui.pressure_action;
+	status[9] = 0xFFU;
+	status[10] = 0xFFU;
+	status[11] = (s_battery.valid != 0U) ? s_battery.percent : 0xFFU;
+	if (s_ui.charger_connected != 0U)
+	{
+		flags |= 0x01U;
+	}
+	if (s_ui.charger_full != 0U)
+	{
+		flags |= 0x02U;
+	}
+	if (BleProtocol_IsHeartbeatValid(now_ms) != 0U)
+	{
+		flags |= 0x04U;
+	}
+	if (Pwr1 != 0U)
+	{
+		flags |= 0x08U;
+	}
+	if (Pwr2 != 0U)
+	{
+		flags |= 0x10U;
+	}
+	status[12] = flags;
+	status[13] = 0U;
+	status[14] = 0U;
 }
 
 static void BleName_Task10ms(void)
@@ -2664,7 +2865,13 @@ static void BleName_Task10ms(void)
 
 	if (s_ble_name.state == BLE_NAME_DONE)
 	{
-		BleDataDiagnostic_Task10ms();
+		if (s_ble_name.protocol_active == 0U)
+		{
+			BleProtocol_Reset();
+			s_ble_name.protocol_active = 1U;
+			LOG_I("t=%u BLE protocol ready", s_system_tick_ms);
+		}
+		BleProtocol_RxTask10ms();
 		return;
 	}
 
@@ -2701,23 +2908,22 @@ static void BleName_Task10ms(void)
 	if ((s_ble_name.tx_data != 0) &&
 	    (s_ble_name.tx_index < s_ble_name.tx_length))
 	{
-		while (s_ble_name.tx_index < s_ble_name.tx_length)
+		if (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) != RESET)
 		{
-			if (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) == RESET)
-			{
-				continue;
-			}
 			USART_SendData(USART2,
 			               (uint16_t)(uint8_t)s_ble_name.tx_data[s_ble_name.tx_index]);
 			s_ble_name.tx_index++;
 		}
-		s_ble_name.deadline_ms =
-			s_system_tick_ms + BLE_AT_RESPONSE_TIMEOUT_MS;
-		if (s_ble_name.state == BLE_NAME_WAIT_RESET_TX)
+		if (s_ble_name.tx_index == s_ble_name.tx_length)
 		{
-			s_ble_name.state = BLE_NAME_WAIT_REBOOT;
 			s_ble_name.deadline_ms =
-				s_system_tick_ms + BLE_POWERUP_WAIT_MS;
+				s_system_tick_ms + BLE_AT_RESPONSE_TIMEOUT_MS;
+			if (s_ble_name.state == BLE_NAME_WAIT_RESET_TX)
+			{
+				s_ble_name.state = BLE_NAME_WAIT_REBOOT;
+				s_ble_name.deadline_ms =
+					s_system_tick_ms + BLE_POWERUP_WAIT_MS;
+			}
 		}
 	}
 
@@ -2780,7 +2986,6 @@ static void BleName_Task10ms(void)
 static void Communication_Task10ms(void)
 {
 	BleName_Task10ms();
-	/* TODO：解析蓝牙接收缓存，并把合法命令转换为与按键相同的事件�? */
 }
 
 static void AppEvent_Task10ms(void)
