@@ -134,7 +134,6 @@ extern "C" {
 
 
 
-#define MAX_BUFFER_SIZE  12
 
 
 
@@ -147,6 +146,15 @@ extern "C" {
 #define TREATMENT_CHANNEL_2         1U
 /* 台架联调：启用双通道 DAC 包络输出；量产前仍需完成负载幅值验证。 */
 #define TREATMENT_DAC_OUTPUT_ENABLE 1U
+/* Remote dangerous actions stay disabled until the corresponding hardware
+ * calibration and bench verification have been completed. */
+#define BLE_REMOTE_TREATMENT_CONTROL_ENABLE 0U
+#define BLE_REMOTE_PRESSURE_CONTROL_ENABLE  0U
+
+#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE > 1U) || \
+    (BLE_REMOTE_PRESSURE_CONTROL_ENABLE > 1U)
+#error "BLE remote control gates must be 0 or 1"
+#endif
 
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
