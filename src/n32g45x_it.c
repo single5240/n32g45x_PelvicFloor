@@ -259,7 +259,7 @@ void USART2_IRQHandler(void)
 {
     if (USART_GetIntStatus(USART2, USART_INT_RXDNE) != RESET)
     {
-        (void)USART_ReceiveData(USART2);
+        App_BleRxByteISR((uint8_t)USART_ReceiveData(USART2));
     }
 }
 /**

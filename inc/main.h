@@ -150,6 +150,7 @@ extern "C" {
 
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
+void App_BleRxByteISR(uint8_t data);
 
 
 

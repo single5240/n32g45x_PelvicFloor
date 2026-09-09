@@ -180,6 +180,16 @@ typedef enum
 #define PRESSURE_INFLATE_TIMEOUT_MS 3000U
 #define PRESSURE_DEFLATE_TIME_MS    3000U
 
+#define BLE_RX_BUFFER_SIZE          256U
+#define BLE_AT_LINE_SIZE            32U
+#define BLE_MAC_TEXT_LENGTH         12U
+#define BLE_NAME_PREFIX             "qw316_"
+#define BLE_NAME_PREFIX_LENGTH      6U
+#define BLE_NAME_LENGTH             (BLE_NAME_PREFIX_LENGTH + BLE_MAC_TEXT_LENGTH)
+#define BLE_POWERUP_WAIT_MS         500U
+#define BLE_AT_RESPONSE_TIMEOUT_MS  1000U
+#define BLE_RESET_DELAY_MS          100U
+
 /* 电池检测参数：PA3 �? 1/2 电池分压，PA6 为外�? 2.5 V 参考�? */
 #define BATTERY_ADC_SAMPLE_COUNT          8U
 #define BATTERY_ADC_USED_SAMPLE_COUNT     6U
@@ -295,6 +305,39 @@ typedef struct
 	uint16_t voltage_mv;
 } BatteryContext_t;
 
+typedef enum
+{
+	BLE_NAME_IDLE = 0,
+	BLE_NAME_WAIT_POWERUP,
+	BLE_NAME_WAIT_MAC,
+	BLE_NAME_WAIT_CURRENT_NAME,
+	BLE_NAME_WAIT_SET_RESULT,
+	BLE_NAME_WAIT_RESET_DELAY,
+	BLE_NAME_WAIT_RESET_TX,
+	BLE_NAME_WAIT_REBOOT,
+	BLE_NAME_DONE,
+	BLE_NAME_FAILED
+} BleNameState_t;
+
+typedef struct
+{
+	BleNameState_t state;
+	uint32_t deadline_ms;
+	const char *tx_data;
+	uint8_t tx_length;
+	uint8_t tx_index;
+	uint8_t line_length;
+	uint8_t set_attempts;
+	uint8_t diagnostic_sample[8U];
+	uint8_t diagnostic_sample_length;
+	uint32_t diagnostic_rx_count;
+	uint32_t diagnostic_last_log_ms;
+	char line[BLE_AT_LINE_SIZE];
+	char mac[BLE_MAC_TEXT_LENGTH + 1U];
+	char desired_name[BLE_NAME_LENGTH + 1U];
+	char set_name_command[5U + BLE_NAME_LENGTH + 2U + 1U];
+} BleNameContext_t;
+
 /* SysTick 中断�? 1 ms 增加一次。中断和主循环共享，因此必须使用 volatile�? */
 static volatile uint32_t s_system_tick_ms = 0U;
 static AppContext_t s_app;
@@ -303,6 +346,11 @@ static KeyFilter_t s_keys[KEY_ID_COUNT];
 static AppEventQueue_t s_event_queue;
 static UiModel_t s_ui;
 static BatteryContext_t s_battery;
+static BleNameContext_t s_ble_name;
+static volatile uint8_t s_ble_rx_buffer[BLE_RX_BUFFER_SIZE];
+static volatile uint8_t s_ble_rx_write_index;
+static volatile uint8_t s_ble_rx_read_index;
+static volatile uint8_t s_ble_rx_overflow;
 static uint8_t s_pressure_adc_initialized;
 static uint32_t s_pressure_adc_last_sample_ms;
 static uint32_t s_pressure_adc_window_start_ms;
@@ -377,6 +425,14 @@ static uint16_t Pressure_CalculateMmHg(uint16_t adc_value,
 static uint8_t Pressure_ReadFilteredAdc(uint16_t *adc_value);
 static void Pressure_UpdateLiveValue(uint16_t adc_value);
 static void PressureAdc_Task100ms(void);
+static void BleName_Start(void);
+static void BleName_Stop(void);
+static void BleName_Task10ms(void);
+static void BleName_SendCommand(const char *command, uint8_t length,
+                                BleNameState_t wait_state);
+static void BleName_ProcessLine(void);
+static uint8_t BleName_IsHex(char value);
+static void BleDataDiagnostic_Task10ms(void);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码�? */
 void AppUi_SetBleConnected(uint8_t connected);
@@ -404,6 +460,20 @@ void App_Tick1msISR(void)
 	s_system_tick_ms++;
 }
 
+void App_BleRxByteISR(uint8_t data)
+{
+	uint8_t next_index = (uint8_t)((s_ble_rx_write_index + 1U) % BLE_RX_BUFFER_SIZE);
+
+	if (next_index == s_ble_rx_read_index)
+	{
+		s_ble_rx_overflow = 1U;
+		return;
+	}
+
+	s_ble_rx_buffer[s_ble_rx_write_index] = data;
+	s_ble_rx_write_index = next_index;
+}
+
 /* 板级基础初始化：这里只初始化所有状态都会使用的资源�? */
 static void Board_Init(void)
 {
@@ -420,6 +490,7 @@ static void Board_Init(void)
 	TIM1_Configuration();
 	TIM8_Configuration();
 	TIM4_Configuration();
+	USART2_Configuration();
 	NVIC_Configuration();
 	SEGGER_RTT_Init();
 	LOG_I("t=%u system init, core=%u Hz", s_system_tick_ms, SystemCoreClock);
@@ -449,6 +520,7 @@ static void Board_EnterSafeState(void)
 	VEN_OFF;
 	BATEN_OFF;
 	BLEEN_OFF;
+	BleName_Stop();
 	SWEN_OFF;
 
 	/* 蜂鸣器属于交互提示，由蜂鸣任务负责停止，不与危险输出混在一起�? */
@@ -722,6 +794,8 @@ static void App_StateEnter(AppState_t state)
 				Battery_StartSession();
 			}
 			Ui_InitHardware();
+			BLEEN_ON;
+			BleName_Start();
 			Ui_RecordActivity();
 			Ui_Beep(3U);
 			App_RequestState(APP_STATE_THERAPY);
@@ -2351,8 +2425,361 @@ static void Input_Task10ms(void)
 	Charger_Update();
 }
 
+static uint8_t BleName_IsHex(char value)
+{
+	return (((value >= '0') && (value <= '9')) ||
+	        ((value >= 'A') && (value <= 'F')) ||
+	        ((value >= 'a') && (value <= 'f'))) ? 1U : 0U;
+}
+
+static void BleName_SendCommand(const char *command, uint8_t length,
+                                BleNameState_t wait_state)
+{
+	s_ble_name.tx_data = command;
+	s_ble_name.tx_length = length;
+	s_ble_name.tx_index = 0U;
+	s_ble_name.deadline_ms = 0U;
+	s_ble_name.state = wait_state;
+
+	if (wait_state == BLE_NAME_WAIT_MAC)
+	{
+		LOG_I("t=%u BLE AT TX: query MAC", s_system_tick_ms);
+	}
+	else if (wait_state == BLE_NAME_WAIT_CURRENT_NAME)
+	{
+		LOG_I("t=%u BLE AT TX: query name%s", s_system_tick_ms,
+		      (s_ble_name.set_attempts != 0U) ? " after reset" : "");
+	}
+	else if (wait_state == BLE_NAME_WAIT_SET_RESULT)
+	{
+		LOG_I("t=%u BLE AT TX: set name=%s", s_system_tick_ms,
+		      s_ble_name.desired_name);
+	}
+	else if (wait_state == BLE_NAME_WAIT_RESET_TX)
+	{
+		LOG_I("t=%u BLE AT TX: reset module", s_system_tick_ms);
+	}
+}
+
+static void BleName_Stop(void)
+{
+	s_ble_name.state = BLE_NAME_IDLE;
+	s_ble_name.tx_data = 0;
+	s_ble_name.tx_length = 0U;
+	s_ble_name.tx_index = 0U;
+	s_ble_name.line_length = 0U;
+	s_ble_name.set_attempts = 0U;
+	s_ble_name.diagnostic_sample_length = 0U;
+	s_ble_name.diagnostic_rx_count = 0U;
+	s_ble_name.diagnostic_last_log_ms = s_system_tick_ms;
+	s_ble_name.deadline_ms = 0U;
+	s_ble_rx_read_index = s_ble_rx_write_index;
+	s_ble_rx_overflow = 0U;
+}
+
+static void BleName_Start(void)
+{
+	BleName_Stop();
+	s_ble_name.state = BLE_NAME_WAIT_POWERUP;
+	s_ble_name.deadline_ms = s_system_tick_ms + BLE_POWERUP_WAIT_MS;
+	LOG_I("t=%u BLE power enabled, wait %u ms", s_system_tick_ms,
+	      BLE_POWERUP_WAIT_MS);
+}
+
+static void BleName_ProcessLine(void)
+{
+	uint8_t index;
+	uint8_t name_matches;
+	char value;
+
+	if (s_ble_name.state == BLE_NAME_WAIT_MAC)
+	{
+		if ((s_ble_name.line_length != (3U + BLE_MAC_TEXT_LENGTH)) ||
+		    (s_ble_name.line[0] != 'T') ||
+		    ((s_ble_name.line[1] != 'N') && (s_ble_name.line[1] != 'B')) ||
+		    (s_ble_name.line[2] != '+'))
+		{
+			return;
+		}
+
+		for (index = 0U; index < BLE_MAC_TEXT_LENGTH; index++)
+		{
+			value = s_ble_name.line[3U + index];
+
+			if (BleName_IsHex(value) == 0U)
+			{
+				return;
+			}
+		}
+		/* KT6368A returns the address least-significant byte first. Build the
+		 * advertised name in the same byte order shown by BLE scanners. */
+		for (index = 0U; index < (BLE_MAC_TEXT_LENGTH / 2U); index++)
+		{
+			s_ble_name.mac[index * 2U] =
+				s_ble_name.line[3U + BLE_MAC_TEXT_LENGTH - 2U - (index * 2U)];
+			s_ble_name.mac[(index * 2U) + 1U] =
+				s_ble_name.line[3U + BLE_MAC_TEXT_LENGTH - 1U - (index * 2U)];
+		}
+		s_ble_name.mac[BLE_MAC_TEXT_LENGTH] = '\0';
+		LOG_I("t=%u BLE MAC response=%s display=%s", s_system_tick_ms,
+		      s_ble_name.line, s_ble_name.mac);
+
+		for (index = 0U; index < BLE_NAME_PREFIX_LENGTH; index++)
+		{
+			s_ble_name.desired_name[index] = BLE_NAME_PREFIX[index];
+		}
+		for (index = 0U; index < BLE_MAC_TEXT_LENGTH; index++)
+		{
+			s_ble_name.desired_name[BLE_NAME_PREFIX_LENGTH + index] =
+				s_ble_name.mac[index];
+		}
+		s_ble_name.desired_name[BLE_NAME_LENGTH] = '\0';
+
+		BleName_SendCommand("AT+TM\r\n", 7U, BLE_NAME_WAIT_CURRENT_NAME);
+		return;
+	}
+
+	if (s_ble_name.state == BLE_NAME_WAIT_CURRENT_NAME)
+	{
+		if ((s_ble_name.line_length < 3U) ||
+		    (s_ble_name.line[0] != 'T') ||
+		    (s_ble_name.line[1] != 'M') ||
+		    (s_ble_name.line[2] != '+'))
+		{
+			return;
+		}
+		LOG_I("t=%u BLE current name=%s", s_system_tick_ms,
+		      &s_ble_name.line[3]);
+
+		name_matches = (s_ble_name.line_length == (3U + BLE_NAME_LENGTH)) ? 1U : 0U;
+		for (index = 0U; (index < BLE_NAME_LENGTH) && (name_matches != 0U); index++)
+		{
+			if (s_ble_name.line[3U + index] != s_ble_name.desired_name[index])
+			{
+				name_matches = 0U;
+			}
+		}
+
+		if (name_matches != 0U)
+		{
+			s_ble_name.state = BLE_NAME_DONE;
+			s_ble_name.deadline_ms = 0U;
+			LOG_I("t=%u BLE name ready: %s", s_system_tick_ms,
+			      s_ble_name.desired_name);
+			return;
+		}
+		if (s_ble_name.set_attempts != 0U)
+		{
+			s_ble_name.state = BLE_NAME_FAILED;
+			LOG_E("t=%u BLE name verification failed", s_system_tick_ms);
+			return;
+		}
+
+		s_ble_name.set_name_command[0] = 'A';
+		s_ble_name.set_name_command[1] = 'T';
+		s_ble_name.set_name_command[2] = '+';
+		s_ble_name.set_name_command[3] = 'B';
+		s_ble_name.set_name_command[4] = 'M';
+		for (index = 0U; index < BLE_NAME_LENGTH; index++)
+		{
+			s_ble_name.set_name_command[5U + index] = s_ble_name.desired_name[index];
+		}
+		s_ble_name.set_name_command[5U + BLE_NAME_LENGTH] = '\r';
+		s_ble_name.set_name_command[6U + BLE_NAME_LENGTH] = '\n';
+		s_ble_name.set_name_command[7U + BLE_NAME_LENGTH] = '\0';
+		BleName_SendCommand(s_ble_name.set_name_command,
+		                    (uint8_t)(7U + BLE_NAME_LENGTH),
+		                    BLE_NAME_WAIT_SET_RESULT);
+		s_ble_name.set_attempts++;
+		return;
+	}
+
+	if (s_ble_name.state == BLE_NAME_WAIT_SET_RESULT)
+	{
+		if ((s_ble_name.line_length >= 2U) &&
+		    (s_ble_name.line[0] == 'O') && (s_ble_name.line[1] == 'K'))
+		{
+			LOG_I("t=%u BLE set-name accepted", s_system_tick_ms);
+			s_ble_name.state = BLE_NAME_WAIT_RESET_DELAY;
+			s_ble_name.deadline_ms = s_system_tick_ms + BLE_RESET_DELAY_MS;
+			return;
+		}
+
+		if ((s_ble_name.line_length >= 2U) &&
+		    (s_ble_name.line[0] == 'E') && (s_ble_name.line[1] == 'R'))
+		{
+			s_ble_name.state = BLE_NAME_FAILED;
+			LOG_E("t=%u BLE name command rejected: %s", s_system_tick_ms,
+			      s_ble_name.line);
+		}
+	}
+}
+
+static void BleDataDiagnostic_Task10ms(void)
+{
+	uint8_t data;
+
+	if (s_ble_rx_overflow != 0U)
+	{
+		s_ble_rx_overflow = 0U;
+		s_ble_rx_read_index = s_ble_rx_write_index;
+		s_ble_name.diagnostic_sample_length = 0U;
+		s_ble_name.diagnostic_rx_count = 0U;
+		LOG_W("t=%u BLE data RX overflow", s_system_tick_ms);
+		return;
+	}
+
+	while (s_ble_rx_read_index != s_ble_rx_write_index)
+	{
+		data = s_ble_rx_buffer[s_ble_rx_read_index];
+		s_ble_rx_read_index =
+			(uint8_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
+		s_ble_name.diagnostic_rx_count++;
+		if (s_ble_name.diagnostic_sample_length <
+		    (uint8_t)sizeof(s_ble_name.diagnostic_sample))
+		{
+			s_ble_name.diagnostic_sample[s_ble_name.diagnostic_sample_length++] = data;
+		}
+	}
+
+	if ((s_ble_name.diagnostic_rx_count != 0U) &&
+	    ((uint32_t)(s_system_tick_ms - s_ble_name.diagnostic_last_log_ms) >= 1000U))
+	{
+		LOG_I("t=%u BLE RX bytes=%u sample[%u]=%02X %02X %02X %02X %02X %02X %02X %02X",
+		      s_system_tick_ms, s_ble_name.diagnostic_rx_count,
+		      s_ble_name.diagnostic_sample_length,
+		      s_ble_name.diagnostic_sample[0], s_ble_name.diagnostic_sample[1],
+		      s_ble_name.diagnostic_sample[2], s_ble_name.diagnostic_sample[3],
+		      s_ble_name.diagnostic_sample[4], s_ble_name.diagnostic_sample[5],
+		      s_ble_name.diagnostic_sample[6], s_ble_name.diagnostic_sample[7]);
+		s_ble_name.diagnostic_rx_count = 0U;
+		s_ble_name.diagnostic_sample_length = 0U;
+		s_ble_name.diagnostic_last_log_ms = s_system_tick_ms;
+	}
+}
+
+static void BleName_Task10ms(void)
+{
+	uint8_t data;
+
+	if (s_ble_name.state == BLE_NAME_DONE)
+	{
+		BleDataDiagnostic_Task10ms();
+		return;
+	}
+
+	if ((s_ble_name.state == BLE_NAME_IDLE) ||
+	    (s_ble_name.state == BLE_NAME_FAILED))
+	{
+		return;
+	}
+
+	if (s_ble_rx_overflow != 0U)
+	{
+		s_ble_rx_overflow = 0U;
+		s_ble_rx_read_index = s_ble_rx_write_index;
+		s_ble_name.line_length = 0U;
+
+		if (s_ble_name.state == BLE_NAME_WAIT_POWERUP)
+		{
+			LOG_W("t=%u BLE RX flush (power-up burst)", s_system_tick_ms);
+			return;
+		}
+		s_ble_name.state = BLE_NAME_FAILED;
+		LOG_E("t=%u BLE RX overflow", s_system_tick_ms);
+		return;
+	}
+
+	if (s_ble_name.state == BLE_NAME_WAIT_POWERUP)
+	{
+		if ((int32_t)(s_system_tick_ms - s_ble_name.deadline_ms) >= 0)
+		{
+			BleName_SendCommand("AT+TN\r\n", 7U, BLE_NAME_WAIT_MAC);
+		}
+	}
+
+	if ((s_ble_name.tx_data != 0) &&
+	    (s_ble_name.tx_index < s_ble_name.tx_length))
+	{
+		while (s_ble_name.tx_index < s_ble_name.tx_length)
+		{
+			if (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) == RESET)
+			{
+				continue;
+			}
+			USART_SendData(USART2,
+			               (uint16_t)(uint8_t)s_ble_name.tx_data[s_ble_name.tx_index]);
+			s_ble_name.tx_index++;
+		}
+		s_ble_name.deadline_ms =
+			s_system_tick_ms + BLE_AT_RESPONSE_TIMEOUT_MS;
+		if (s_ble_name.state == BLE_NAME_WAIT_RESET_TX)
+		{
+			s_ble_name.state = BLE_NAME_WAIT_REBOOT;
+			s_ble_name.deadline_ms =
+				s_system_tick_ms + BLE_POWERUP_WAIT_MS;
+		}
+	}
+
+	while (s_ble_rx_read_index != s_ble_rx_write_index)
+	{
+		data = s_ble_rx_buffer[s_ble_rx_read_index];
+		s_ble_rx_read_index =
+			(uint8_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
+
+		if (data == (uint8_t)'\n')
+		{
+			s_ble_name.line[s_ble_name.line_length] = '\0';
+			BleName_ProcessLine();
+			s_ble_name.line_length = 0U;
+		}
+		else if (data != (uint8_t)'\r')
+		{
+			if (s_ble_name.line_length < (BLE_AT_LINE_SIZE - 1U))
+			{
+				s_ble_name.line[s_ble_name.line_length++] = (char)data;
+			}
+			else
+			{
+				s_ble_name.line_length = 0U;
+			}
+		}
+	}
+
+	if ((s_ble_name.state == BLE_NAME_WAIT_RESET_DELAY) &&
+	    ((int32_t)(s_system_tick_ms - s_ble_name.deadline_ms) >= 0))
+	{
+		BleName_SendCommand("AT+CZ\r\n", 7U, BLE_NAME_WAIT_RESET_TX);
+	}
+	else if ((s_ble_name.state == BLE_NAME_WAIT_REBOOT) &&
+	         ((int32_t)(s_system_tick_ms - s_ble_name.deadline_ms) >= 0))
+	{
+		BleName_SendCommand("AT+TM\r\n", 7U, BLE_NAME_WAIT_CURRENT_NAME);
+	}
+	else if ((s_ble_name.deadline_ms != 0U) &&
+	         (s_ble_name.tx_index == s_ble_name.tx_length) &&
+	         (s_ble_name.state != BLE_NAME_WAIT_POWERUP) &&
+	         (s_ble_name.state != BLE_NAME_WAIT_RESET_DELAY) &&
+	         (s_ble_name.state != BLE_NAME_WAIT_RESET_TX) &&
+	         ((int32_t)(s_system_tick_ms - s_ble_name.deadline_ms) >= 0))
+	{
+		if (s_ble_name.state == BLE_NAME_WAIT_SET_RESULT)
+		{
+			/* AT+CR may disable OK feedback. TN/TM already proved that the
+			 * command channel is valid, so reset after the persistence window. */
+			BleName_SendCommand("AT+CZ\r\n", 7U, BLE_NAME_WAIT_RESET_TX);
+		}
+		else
+		{
+			s_ble_name.state = BLE_NAME_FAILED;
+			LOG_E("t=%u BLE name setup timeout", s_system_tick_ms);
+		}
+	}
+}
+
 static void Communication_Task10ms(void)
 {
+	BleName_Task10ms();
 	/* TODO：解析蓝牙接收缓存，并把合法命令转换为与按键相同的事件�? */
 }
 
