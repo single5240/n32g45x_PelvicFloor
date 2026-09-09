@@ -1193,13 +1193,9 @@ static void App_HandleEvent(AppEvent_t event)
 				}
 				uint8_t *power = (s_ui.selected_channel == 0U) ?
 				                 &s_ui.power_ch1 : &s_ui.power_ch2;
-				if (*power < UI_MAX_POWER - 10)
+				if (*power < UI_MAX_POWER)
 				{
-					(*power)+=10;
-				}
-				else
-				{
-					(*power) = UI_MAX_POWER;
+					(*power)++;
 				}
 				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=ON",
 				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
@@ -1214,13 +1210,9 @@ static void App_HandleEvent(AppEvent_t event)
 				Ui_Beep(1U);
 				uint8_t *power = (s_ui.selected_channel == 0U) ?
 				                 &s_ui.power_ch1 : &s_ui.power_ch2;
-				if (*power > 10U)
+				if (*power > 0U)
 				{
-					(*power)-=10;
-				}
-				else
-				{
-					(*power) = 0;
+					(*power)--;
 				}
 				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=ON",
 				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
