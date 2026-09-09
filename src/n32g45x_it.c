@@ -268,6 +268,42 @@ void USART2_IRQHandler(void)
 
 uint16_t Set_Value = 55;
 
+#define TREATMENT_BRIDGE_OFF    0U
+#define TREATMENT_BRIDGE_LEFT   1U
+#define TREATMENT_BRIDGE_RIGHT  2U
+
+static void TreatmentPulse_SelectCh1Leg(uint8_t leg)
+{
+	/* Always turn both legs off before selecting the next polarity. */
+	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
+	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+
+	if (leg == TREATMENT_BRIDGE_LEFT)
+	{
+		TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_ENABLE);
+	}
+	else if (leg == TREATMENT_BRIDGE_RIGHT)
+	{
+		TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_ENABLE);
+	}
+}
+
+static void TreatmentPulse_SelectCh2Leg(uint8_t leg)
+{
+	/* PA7/PB0 are TIM8_CH1N/CH2N in the default TIM8 mapping. */
+	TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
+	TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
+
+	if (leg == TREATMENT_BRIDGE_LEFT)
+	{
+		TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_ENABLE);
+	}
+	else if (leg == TREATMENT_BRIDGE_RIGHT)
+	{
+		TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_ENABLE);
+	}
+}
+
 static uint8_t TreatmentPulse_NormalizeMode(uint8_t mode)
 {
 	return (mode < TREATMENT_PULSE_MODE_COUNT) ? mode : 0U;
@@ -653,20 +689,17 @@ void TIM1_UP_IRQHandler(void)
 			Tim1_Count++;
 			if (Tim1_Count == 1U)
 			{
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_ENABLE);
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_LEFT);
 			}
 			else if (Tim1_Count == 2U)
 			{
 				Tim1_Count = 0U;
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-				TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_ENABLE);
+				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_RIGHT);
 			}
 		}
 		else
 		{
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+			TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
 			Tim1_Count = 0U;
 		}
 	}
@@ -989,20 +1022,17 @@ void TIM8_UP_IRQHandler(void)
 			Tim8_Count++;
 			if (Tim8_Count == 1U)
 			{
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_ENABLE);
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_LEFT);
 			}
 			else if (Tim8_Count == 2U)
 			{
 				Tim8_Count = 0U;
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-				TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_ENABLE);
+				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_RIGHT);
 			}
 		}
 		else
 		{
-			TIM_EnableCapCmpCh(TIM8, TIM_CH_1, TIM_CAP_CMP_DISABLE);
-			TIM_EnableCapCmpCh(TIM8, TIM_CH_2, TIM_CAP_CMP_DISABLE);
+			TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
 			Tim8_Count = 0U;
 		}
 	}

@@ -145,7 +145,7 @@ extern "C" {
 #define TREATMENT_PULSE_MODE_COUNT  3U
 #define TREATMENT_CHANNEL_1         0U
 #define TREATMENT_CHANNEL_2         1U
-/* 台架验证：启用初始提交中的双通道 DAC 包络输出。 */
+/* 台架联调：启用双通道 DAC 包络输出；量产前仍需完成负载幅值验证。 */
 #define TREATMENT_DAC_OUTPUT_ENABLE 1U
 
 void TreatmentPulse_SetMode(uint8_t mode);

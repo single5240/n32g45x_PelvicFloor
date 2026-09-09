@@ -413,8 +413,10 @@ static void Board_Init(void)
 	DAC_ChannelConfig();
 	DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
 	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
+#if (TREATMENT_DAC_OUTPUT_ENABLE != 0U)
 	TIM6_Configuration();
 	TIM_Enable(TIM6, ENABLE);
+#endif
 	TIM1_Configuration();
 	TIM8_Configuration();
 	TIM4_Configuration();
@@ -1199,7 +1201,7 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power) = UI_MAX_POWER;
 				}
-				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=OFF",
+				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=ON",
 				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
 				      (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
@@ -1220,7 +1222,7 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power) = 0;
 				}
-				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=OFF",
+				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=ON",
 				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
 				      (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
@@ -2407,23 +2409,23 @@ static void Control_Task10ms(void)
 
 	if ((previous_pwr1 == 0U) && (Pwr1 != 0U))
 	{
-		LOG_I("t=%u treatment start ch=1 mode=P%u level=%u timer=TIM1 pins=PA8/PA9 dac=OFF",
+		LOG_I("t=%u treatment start ch=1 mode=P%u level=%u timer=TIM1 pins=PA8/PA9 dac=ON",
 		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U), Pwr1);
 	}
 	else if ((previous_pwr1 != 0U) && (Pwr1 == 0U))
 	{
-		LOG_I("t=%u treatment stop ch=1 mode=P%u timer=TIM1 dac=OFF",
+		LOG_I("t=%u treatment stop ch=1 mode=P%u timer=TIM1 dac=ON",
 		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U));
 	}
 
 	if ((previous_pwr2 == 0U) && (Pwr2 != 0U))
 	{
-		LOG_I("t=%u treatment start ch=2 mode=P%u level=%u timer=TIM8 pins=PA7/PB0 dac=OFF",
+		LOG_I("t=%u treatment start ch=2 mode=P%u level=%u timer=TIM8 pins=PA7/PB0 dac=ON",
 		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U), Pwr2);
 	}
 	else if ((previous_pwr2 != 0U) && (Pwr2 == 0U))
 	{
-		LOG_I("t=%u treatment stop ch=2 mode=P%u timer=TIM8 dac=OFF",
+		LOG_I("t=%u treatment stop ch=2 mode=P%u timer=TIM8 dac=ON",
 		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U));
 	}
 
