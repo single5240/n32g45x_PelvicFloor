@@ -123,6 +123,7 @@ int main(void)
 	uint8_t action;
 	uint8_t byte;
 	uint8_t index;
+	BleProtocolStats_t stats;
 
 	callbacks.stop_all = StopAll;
 	callbacks.ui_action = UiAction;
@@ -130,12 +131,15 @@ int main(void)
 	callbacks.remote_danger_timeout = RemoteDangerTimeout;
 	callbacks.get_status = GetStatus;
 	BleProtocol_Init(&callbacks);
+	assert(BleProtocol_HasTxData() == 0U);
 	assert(Crc8((const uint8_t *)"\x5A\xA5\x11\x00\x71", 5U) == 0x0FU);
 
 	BleProtocol_InputByte(0x00U, 10U);
 	BleProtocol_InputByte(0x5AU, 10U);
 	SendFrame(0x71U, 0, 0U, 10U);
+	assert(BleProtocol_HasTxData() != 0U);
 	AssertResponse(0x71U, BLE_RESULT_OK, BLE_PROTOCOL_STATUS_LENGTH);
+	assert(BleProtocol_HasTxData() == 0U);
 	assert(s_link_state == 1U);
 
 	SendFrame(0x90U, 0, 0U, 100U);
@@ -192,6 +196,13 @@ int main(void)
 	BleProtocol_SetRemoteDangerActive(1U);
 	BleProtocol_Reset();
 	assert(s_danger_timeout_count == 2U);
+	BleProtocol_GetStats(&stats);
+	assert(stats.valid_frames != 0U);
+	assert(stats.crc_errors == 1U);
+	assert(stats.frame_timeouts == 1U);
+	assert(stats.command_length_errors == 1U);
+	assert(stats.unsupported_commands == 1U);
+	assert(stats.tx_dropped_frames == 0U);
 
 	puts("ble_protocol_test: PASS");
 	return 0;

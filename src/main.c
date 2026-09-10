@@ -215,7 +215,7 @@ typedef enum
 #define PRESSURE_INFLATE_TIMEOUT_MS 3000U
 #define PRESSURE_DEFLATE_TIME_MS    3000U
 
-#define BLE_RX_BUFFER_SIZE          256U
+#define BLE_RX_BUFFER_SIZE          512U
 #define BLE_AT_LINE_SIZE            32U
 #define BLE_MAC_TEXT_LENGTH         12U
 #define BLE_NAME_PREFIX             "qw316_"
@@ -224,6 +224,10 @@ typedef enum
 #define BLE_POWERUP_WAIT_MS         500U
 #define BLE_AT_RESPONSE_TIMEOUT_MS  1000U
 #define BLE_RESET_DELAY_MS          100U
+#define BLE_AT_MAX_RETRY_COUNT      3U
+#define BLE_MONITOR_PERIOD_MS       30000U
+#define BLE_STA_STARTUP_CHECK_MS    1500U
+#define BLE_STA_DEBOUNCE_COUNT      10U
 
 /* 电池检测参数：PA3 �? 1/2 电池分压，PA6 为外�? 2.5 V 参考�? */
 #define BATTERY_ADC_SAMPLE_COUNT          8U
@@ -360,15 +364,47 @@ typedef struct
 	uint32_t deadline_ms;
 	const char *tx_data;
 	uint8_t tx_length;
-	uint8_t tx_index;
+	volatile uint8_t tx_index;
 	uint8_t line_length;
 	uint8_t set_attempts;
+	uint8_t retry_count;
+	uint8_t cached_name_valid;
 	uint8_t protocol_active;
 	char line[BLE_AT_LINE_SIZE];
 	char mac[BLE_MAC_TEXT_LENGTH + 1U];
 	char desired_name[BLE_NAME_LENGTH + 1U];
 	char set_name_command[5U + BLE_NAME_LENGTH + 2U + 1U];
 } BleNameContext_t;
+
+typedef struct
+{
+	uint32_t rx_bytes;
+	uint32_t tx_bytes;
+	uint32_t rx_ring_overflows;
+	uint32_t usart_overruns;
+	uint32_t usart_frame_errors;
+	uint32_t usart_noise_errors;
+	uint32_t usart_parity_errors;
+	uint32_t at_retries;
+	uint32_t at_fallbacks;
+	uint32_t at_failures;
+	uint32_t sta_startup_failures;
+	uint32_t sta_link_mismatches;
+	uint32_t sta_disconnects;
+} BleCommCounters_t;
+
+typedef struct
+{
+	uint32_t start_ms;
+	uint8_t enabled;
+	uint8_t startup_high_seen;
+	uint8_t startup_high_count;
+	uint8_t startup_error_reported;
+	uint8_t raw_high;
+	uint8_t stable_connected;
+	uint8_t debounce_count;
+	uint8_t mismatch_reported;
+} BleStaContext_t;
 
 /* SysTick 中断�? 1 ms 增加一次。中断和主循环共享，因此必须使用 volatile�? */
 static volatile uint32_t s_system_tick_ms = 0U;
@@ -380,8 +416,8 @@ static UiModel_t s_ui;
 static BatteryContext_t s_battery;
 static BleNameContext_t s_ble_name;
 static volatile uint8_t s_ble_rx_buffer[BLE_RX_BUFFER_SIZE];
-static volatile uint8_t s_ble_rx_write_index;
-static volatile uint8_t s_ble_rx_read_index;
+static volatile uint16_t s_ble_rx_write_index;
+static volatile uint16_t s_ble_rx_read_index;
 static volatile uint8_t s_ble_rx_overflow;
 static uint8_t s_pressure_adc_initialized;
 static uint32_t s_pressure_adc_last_sample_ms;
@@ -390,9 +426,16 @@ static uint32_t s_pressure_adc_sample_sum;
 static uint16_t s_pressure_adc_sample_count;
 static uint8_t s_pressure_adc_sampling_active;
 static uint8_t s_pressure_adc_pause_ticks;
+static uint8_t s_pressure_adc_value_valid;
 static PressureAction_t s_pressure_output_action;
 static uint8_t s_ble_pending_remote_danger;
 static uint8_t s_ble_remote_danger_active;
+static uint8_t s_ble_protocol_link_active;
+static BleStaContext_t s_ble_sta;
+static volatile BleCommCounters_t s_ble_comm_counters;
+static BleCommCounters_t s_ble_comm_previous;
+static BleProtocolStats_t s_ble_protocol_previous;
+static uint32_t s_ble_monitor_last_ms;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -465,7 +508,9 @@ static void BleName_Task10ms(void);
 static void BleName_SendCommand(const char *command, uint8_t length,
                                 BleNameState_t wait_state);
 static void BleName_ProcessLine(void);
+static void BleName_RetryOrFallback(const char *reason);
 static uint8_t BleName_IsHex(char value);
+static void BleSta_Task10ms(void);
 static void BleProtocol_RxTask10ms(void);
 static void BleProtocol_TxTask(void);
 static void BleProtocol_StopAll(void);
@@ -475,6 +520,7 @@ static void BleProtocol_RemoteDangerTimeout(void);
 static void BleProtocol_UpdateRemoteDanger(void);
 static void BleProtocol_GetStatus(uint32_t now_ms,
 	                              uint8_t status[BLE_PROTOCOL_STATUS_LENGTH]);
+static void BleComm_MonitorTask10ms(void);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码�? */
 void AppUi_SetBleConnected(uint8_t connected);
@@ -504,16 +550,72 @@ void App_Tick1msISR(void)
 
 void App_BleRxByteISR(uint8_t data)
 {
-	uint8_t next_index = (uint8_t)((s_ble_rx_write_index + 1U) % BLE_RX_BUFFER_SIZE);
+	uint16_t next_index = (uint16_t)((s_ble_rx_write_index + 1U) %
+	                                BLE_RX_BUFFER_SIZE);
+	s_ble_comm_counters.rx_bytes++;
 
 	if (next_index == s_ble_rx_read_index)
 	{
 		s_ble_rx_overflow = 1U;
+		s_ble_comm_counters.rx_ring_overflows++;
 		return;
 	}
 
 	s_ble_rx_buffer[s_ble_rx_write_index] = data;
 	s_ble_rx_write_index = next_index;
+}
+
+void App_BleTxReadyISR(void)
+{
+	uint8_t data;
+
+	if ((s_ble_name.tx_data != 0) &&
+	    (s_ble_name.tx_index < s_ble_name.tx_length))
+	{
+		USART_SendData(USART2,
+		               (uint16_t)(uint8_t)s_ble_name.tx_data[s_ble_name.tx_index]);
+		s_ble_comm_counters.tx_bytes++;
+		s_ble_name.tx_index++;
+		if (s_ble_name.tx_index >= s_ble_name.tx_length)
+		{
+			USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
+		}
+		return;
+	}
+
+	if ((s_ble_name.protocol_active != 0U) &&
+	    (BleProtocol_ReadTxByte(&data) != 0U))
+	{
+		USART_SendData(USART2, data);
+		s_ble_comm_counters.tx_bytes++;
+		if (BleProtocol_HasTxData() == 0U)
+		{
+			USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
+		}
+		return;
+	}
+
+	USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
+}
+
+void App_BleUsartErrorISR(uint8_t error_flags)
+{
+	if ((error_flags & APP_BLE_USART_ERROR_OVERRUN) != 0U)
+	{
+		s_ble_comm_counters.usart_overruns++;
+	}
+	if ((error_flags & APP_BLE_USART_ERROR_FRAME) != 0U)
+	{
+		s_ble_comm_counters.usart_frame_errors++;
+	}
+	if ((error_flags & APP_BLE_USART_ERROR_NOISE) != 0U)
+	{
+		s_ble_comm_counters.usart_noise_errors++;
+	}
+	if ((error_flags & APP_BLE_USART_ERROR_PARITY) != 0U)
+	{
+		s_ble_comm_counters.usart_parity_errors++;
+	}
 }
 
 /* 板级基础初始化：这里只初始化所有状态都会使用的资源�? */
@@ -674,6 +776,7 @@ static void App_Init(void)
 	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
 	ble_callbacks.get_status = BleProtocol_GetStatus;
 	BleProtocol_Init(&ble_callbacks);
+	s_ble_monitor_last_ms = s_system_tick_ms;
 
 	s_event_queue.read_index = 0U;
 	s_event_queue.write_index = 0U;
@@ -870,6 +973,7 @@ static void App_StateEnter(AppState_t state)
 			Ui_InitHardware();
 			s_ui.power_ch1 = 0U;
 			s_ui.power_ch2 = 0U;
+			s_pressure_adc_value_valid = 0U;
 			s_app.ui_dirty = 1U;
 			break;
 
@@ -1676,6 +1780,7 @@ void AppUi_SetPressureResult(uint16_t value)
 {
 	s_ui.pressure_value = (value > PRESSURE_HARD_LIMIT_MMHG) ?
 	                      PRESSURE_HARD_LIMIT_MMHG : value;
+	s_pressure_adc_value_valid = 1U;
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 	s_ui.pressure_action_ms = 0U;
 	Pressure_ApplyOutputs();
@@ -2207,6 +2312,7 @@ static void Pressure_UpdateLiveValue(uint16_t adc_value)
 {
 	uint16_t pressure_mmhg = Pressure_CalculateMmHg(adc_value, NULL, NULL);
 	uint8_t inflation_stopped = 0U;
+	s_pressure_adc_value_valid = 1U;
 
 	if ((pressure_mmhg >= PRESSURE_SAFE_LIMIT_MMHG) &&
 	    (s_ui.pressure_action == PRESSURE_ACTION_INFLATING))
@@ -2271,6 +2377,7 @@ static void PressureAdc_Task100ms(void)
 	{
 		if (ADC2_Initial() == 0U)
 		{
+			s_pressure_adc_value_valid = 0U;
 			LOG_E("t=%u pressure ADC2 init failed", now);
 			return;
 		}
@@ -2306,6 +2413,7 @@ static void PressureAdc_Task100ms(void)
 
 	if (Pressure_ReadFilteredAdc(&raw_value) == 0U)
 	{
+		s_pressure_adc_value_valid = 0U;
 		if (ADC_DisableSafe(ADC2) == 0U)
 		{
 			ADC_DeInit(ADC2);
@@ -2494,6 +2602,7 @@ static void BleName_SendCommand(const char *command, uint8_t length,
 	s_ble_name.tx_index = 0U;
 	s_ble_name.deadline_ms = 0U;
 	s_ble_name.state = wait_state;
+	USART_ConfigInt(USART2, USART_INT_TXDE, ENABLE);
 
 	if (wait_state == BLE_NAME_WAIT_MAC)
 	{
@@ -2517,6 +2626,11 @@ static void BleName_SendCommand(const char *command, uint8_t length,
 
 static void BleName_Stop(void)
 {
+	USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
+	s_ble_sta.enabled = 0U;
+	s_ble_sta.stable_connected = 0U;
+	s_ble_protocol_link_active = 0U;
+	AppUi_SetBleConnected(0U);
 	s_ble_name.state = BLE_NAME_IDLE;
 	s_ble_name.tx_data = 0;
 	s_ble_name.tx_length = 0U;
@@ -2532,9 +2646,55 @@ static void BleName_Stop(void)
 	BleProtocol_Reset();
 }
 
+static void BleName_RetryOrFallback(const char *reason)
+{
+	USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
+	s_ble_name.tx_data = 0;
+	s_ble_name.tx_length = 0U;
+	s_ble_name.tx_index = 0U;
+	s_ble_name.line_length = 0U;
+	s_ble_name.deadline_ms = 0U;
+	s_ble_rx_read_index = s_ble_rx_write_index;
+	s_ble_rx_overflow = 0U;
+
+	if (s_ble_name.retry_count < BLE_AT_MAX_RETRY_COUNT)
+	{
+		s_ble_name.retry_count++;
+		s_ble_comm_counters.at_retries++;
+		s_ble_name.state = BLE_NAME_WAIT_POWERUP;
+		s_ble_name.deadline_ms = s_system_tick_ms + BLE_POWERUP_WAIT_MS;
+		LOG_W("t=%u BLE AT retry %u/%u, reason=%s", s_system_tick_ms,
+		      s_ble_name.retry_count, BLE_AT_MAX_RETRY_COUNT, reason);
+		return;
+	}
+
+	if (s_ble_name.cached_name_valid != 0U)
+	{
+		s_ble_comm_counters.at_fallbacks++;
+		s_ble_name.state = BLE_NAME_DONE;
+		LOG_W("t=%u BLE AT failed after retries, use cached name and passthrough, reason=%s",
+		      s_system_tick_ms, reason);
+		return;
+	}
+
+	s_ble_name.state = BLE_NAME_FAILED;
+	s_ble_comm_counters.at_failures++;
+	LOG_E("t=%u BLE AT failed after retries, no cached name, reason=%s",
+	      s_system_tick_ms, reason);
+}
+
 static void BleName_Start(void)
 {
 	BleName_Stop();
+	s_ble_sta.start_ms = s_system_tick_ms;
+	s_ble_sta.enabled = 1U;
+	s_ble_sta.startup_high_seen = 0U;
+	s_ble_sta.startup_high_count = 0U;
+	s_ble_sta.startup_error_reported = 0U;
+	s_ble_sta.raw_high = (READ_BLESTA == Bit_SET) ? 1U : 0U;
+	s_ble_sta.debounce_count = 0U;
+	s_ble_sta.mismatch_reported = 0U;
+	s_ble_name.retry_count = 0U;
 	s_ble_name.state = BLE_NAME_WAIT_POWERUP;
 	s_ble_name.deadline_ms = s_system_tick_ms + BLE_POWERUP_WAIT_MS;
 	LOG_I("t=%u BLE power enabled, wait %u ms", s_system_tick_ms,
@@ -2589,6 +2749,7 @@ static void BleName_ProcessLine(void)
 				s_ble_name.mac[index];
 		}
 		s_ble_name.desired_name[BLE_NAME_LENGTH] = '\0';
+		s_ble_name.cached_name_valid = 1U;
 
 		BleName_SendCommand("AT+TM\r\n", 7U, BLE_NAME_WAIT_CURRENT_NAME);
 		return;
@@ -2617,6 +2778,7 @@ static void BleName_ProcessLine(void)
 
 		if (name_matches != 0U)
 		{
+			s_ble_name.retry_count = 0U;
 			s_ble_name.state = BLE_NAME_DONE;
 			s_ble_name.deadline_ms = 0U;
 			LOG_I("t=%u BLE name ready: %s", s_system_tick_ms,
@@ -2625,8 +2787,7 @@ static void BleName_ProcessLine(void)
 		}
 		if (s_ble_name.set_attempts != 0U)
 		{
-			s_ble_name.state = BLE_NAME_FAILED;
-			LOG_E("t=%u BLE name verification failed", s_system_tick_ms);
+			BleName_RetryOrFallback("name verification");
 			return;
 		}
 
@@ -2663,9 +2824,8 @@ static void BleName_ProcessLine(void)
 		if ((s_ble_name.line_length >= 2U) &&
 		    (s_ble_name.line[0] == 'E') && (s_ble_name.line[1] == 'R'))
 		{
-			s_ble_name.state = BLE_NAME_FAILED;
-			LOG_E("t=%u BLE name command rejected: %s", s_system_tick_ms,
-			      s_ble_name.line);
+			BleName_RetryOrFallback("name command rejected");
+			return;
 		}
 	}
 }
@@ -2678,6 +2838,7 @@ static void BleProtocol_RxTask10ms(void)
 	{
 		s_ble_rx_overflow = 0U;
 		s_ble_rx_read_index = s_ble_rx_write_index;
+		USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
 		BleProtocol_Reset();
 		LOG_W("t=%u BLE data RX overflow", s_system_tick_ms);
 		return;
@@ -2687,7 +2848,7 @@ static void BleProtocol_RxTask10ms(void)
 	{
 		data = s_ble_rx_buffer[s_ble_rx_read_index];
 		s_ble_rx_read_index =
-			(uint8_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
+			(uint16_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
 		BleProtocol_InputByte(data, s_system_tick_ms);
 	}
 	BleProtocol_Task(s_system_tick_ms);
@@ -2695,17 +2856,12 @@ static void BleProtocol_RxTask10ms(void)
 
 static void BleProtocol_TxTask(void)
 {
-	uint8_t data;
-
 	if ((s_ble_name.protocol_active == 0U) ||
-	    (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) == RESET))
+	    (BleProtocol_HasTxData() == 0U))
 	{
 		return;
 	}
-	if (BleProtocol_ReadTxByte(&data) != 0U)
-	{
-		USART_SendData(USART2, data);
-	}
+	USART_ConfigInt(USART2, USART_INT_TXDE, ENABLE);
 }
 
 static void BleProtocol_StopAll(void)
@@ -2785,7 +2941,7 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 
 static void BleProtocol_LinkState(uint8_t connected)
 {
-	AppUi_SetBleConnected(connected);
+	s_ble_protocol_link_active = (connected != 0U) ? 1U : 0U;
 }
 
 static void BleProtocol_RemoteDangerTimeout(void)
@@ -2831,8 +2987,17 @@ static void BleProtocol_GetStatus(uint32_t now_ms,
 	status[6] = s_ui.remaining_minutes;
 	status[7] = s_ui.remaining_seconds;
 	status[8] = (uint8_t)s_ui.pressure_action;
-	status[9] = 0xFFU;
-	status[10] = 0xFFU;
+	if (s_pressure_adc_value_valid != 0U)
+	{
+		status[9] = (uint8_t)(s_ui.pressure_value & 0xFFU);
+		status[10] = (uint8_t)(s_ui.pressure_value >> 8U);
+		flags |= 0x20U;
+	}
+	else
+	{
+		status[9] = 0xFFU;
+		status[10] = 0xFFU;
+	}
 	status[11] = (s_battery.valid != 0U) ? s_battery.percent : 0xFFU;
 	if (s_ui.charger_connected != 0U)
 	{
@@ -2857,6 +3022,89 @@ static void BleProtocol_GetStatus(uint32_t now_ms,
 	status[12] = flags;
 	status[13] = 0U;
 	status[14] = 0U;
+}
+
+static void BleSta_Task10ms(void)
+{
+	uint8_t raw_high;
+	uint32_t elapsed_ms;
+
+	if (s_ble_sta.enabled == 0U)
+	{
+		return;
+	}
+
+	raw_high = (READ_BLESTA == Bit_SET) ? 1U : 0U;
+	elapsed_ms = (uint32_t)(s_system_tick_ms - s_ble_sta.start_ms);
+	if (elapsed_ms < BLE_STA_STARTUP_CHECK_MS)
+	{
+		if (raw_high != 0U)
+		{
+			if (s_ble_sta.startup_high_count < BLE_STA_DEBOUNCE_COUNT)
+			{
+				s_ble_sta.startup_high_count++;
+			}
+			if (s_ble_sta.startup_high_count >= BLE_STA_DEBOUNCE_COUNT)
+			{
+				s_ble_sta.startup_high_seen = 1U;
+			}
+		}
+		else
+		{
+			s_ble_sta.startup_high_count = 0U;
+		}
+		return;
+	}
+
+	if ((s_ble_sta.startup_high_seen == 0U) &&
+	    (s_ble_sta.startup_error_reported == 0U))
+	{
+		s_ble_sta.startup_error_reported = 1U;
+		s_ble_comm_counters.sta_startup_failures++;
+		LOG_E("t=%u BLE STA startup pulse missing on PB7", s_system_tick_ms);
+	}
+
+	if (raw_high != s_ble_sta.raw_high)
+	{
+		s_ble_sta.raw_high = raw_high;
+		s_ble_sta.debounce_count = 1U;
+		return;
+	}
+	if (s_ble_sta.debounce_count < BLE_STA_DEBOUNCE_COUNT)
+	{
+		s_ble_sta.debounce_count++;
+		if (s_ble_sta.debounce_count < BLE_STA_DEBOUNCE_COUNT)
+		{
+			return;
+		}
+	}
+
+	if (s_ble_sta.stable_connected != raw_high)
+	{
+		s_ble_sta.stable_connected = raw_high;
+		AppUi_SetBleConnected(raw_high);
+		LOG_I("t=%u BLE STA connected=%u", s_system_tick_ms, raw_high);
+		if (raw_high != 0U)
+		{
+			s_ble_sta.mismatch_reported = 0U;
+		}
+		else
+		{
+			s_ble_comm_counters.sta_disconnects++;
+		}
+	}
+
+	if ((s_ble_sta.stable_connected == 0U) &&
+	    (s_ble_protocol_link_active != 0U))
+	{
+		if (s_ble_sta.mismatch_reported == 0U)
+		{
+			s_ble_sta.mismatch_reported = 1U;
+			s_ble_comm_counters.sta_link_mismatches++;
+			LOG_E("t=%u BLE STA low while protocol link is active", s_system_tick_ms);
+		}
+		BleProtocol_Reset();
+	}
 }
 
 static void BleName_Task10ms(void)
@@ -2892,8 +3140,7 @@ static void BleName_Task10ms(void)
 			LOG_W("t=%u BLE RX flush (power-up burst)", s_system_tick_ms);
 			return;
 		}
-		s_ble_name.state = BLE_NAME_FAILED;
-		LOG_E("t=%u BLE RX overflow", s_system_tick_ms);
+		BleName_RetryOrFallback("RX overflow");
 		return;
 	}
 
@@ -2906,24 +3153,17 @@ static void BleName_Task10ms(void)
 	}
 
 	if ((s_ble_name.tx_data != 0) &&
-	    (s_ble_name.tx_index < s_ble_name.tx_length))
+	    (s_ble_name.tx_index == s_ble_name.tx_length) &&
+	    (s_ble_name.deadline_ms == 0U))
 	{
-		if (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) != RESET)
+		s_ble_name.tx_data = 0;
+		s_ble_name.deadline_ms =
+			s_system_tick_ms + BLE_AT_RESPONSE_TIMEOUT_MS;
+		if (s_ble_name.state == BLE_NAME_WAIT_RESET_TX)
 		{
-			USART_SendData(USART2,
-			               (uint16_t)(uint8_t)s_ble_name.tx_data[s_ble_name.tx_index]);
-			s_ble_name.tx_index++;
-		}
-		if (s_ble_name.tx_index == s_ble_name.tx_length)
-		{
+			s_ble_name.state = BLE_NAME_WAIT_REBOOT;
 			s_ble_name.deadline_ms =
-				s_system_tick_ms + BLE_AT_RESPONSE_TIMEOUT_MS;
-			if (s_ble_name.state == BLE_NAME_WAIT_RESET_TX)
-			{
-				s_ble_name.state = BLE_NAME_WAIT_REBOOT;
-				s_ble_name.deadline_ms =
-					s_system_tick_ms + BLE_POWERUP_WAIT_MS;
-			}
+				s_system_tick_ms + BLE_POWERUP_WAIT_MS;
 		}
 	}
 
@@ -2931,7 +3171,7 @@ static void BleName_Task10ms(void)
 	{
 		data = s_ble_rx_buffer[s_ble_rx_read_index];
 		s_ble_rx_read_index =
-			(uint8_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
+			(uint16_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
 
 		if (data == (uint8_t)'\n')
 		{
@@ -2977,15 +3217,89 @@ static void BleName_Task10ms(void)
 		}
 		else
 		{
-			s_ble_name.state = BLE_NAME_FAILED;
-			LOG_E("t=%u BLE name setup timeout", s_system_tick_ms);
+			BleName_RetryOrFallback("response timeout");
 		}
 	}
 }
 
+static void BleComm_MonitorTask10ms(void)
+{
+	BleCommCounters_t current;
+	BleProtocolStats_t protocol;
+	uint32_t now = s_system_tick_ms;
+
+	if ((uint32_t)(now - s_ble_monitor_last_ms) < BLE_MONITOR_PERIOD_MS)
+	{
+		return;
+	}
+	if ((uint32_t)(now - s_ble_monitor_last_ms) >
+	    (BLE_MONITOR_PERIOD_MS * 4U))
+	{
+		s_ble_monitor_last_ms = now;
+	}
+	else
+	{
+		s_ble_monitor_last_ms += BLE_MONITOR_PERIOD_MS;
+	}
+
+	current.rx_bytes = s_ble_comm_counters.rx_bytes;
+	current.tx_bytes = s_ble_comm_counters.tx_bytes;
+	current.rx_ring_overflows = s_ble_comm_counters.rx_ring_overflows;
+	current.usart_overruns = s_ble_comm_counters.usart_overruns;
+	current.usart_frame_errors = s_ble_comm_counters.usart_frame_errors;
+	current.usart_noise_errors = s_ble_comm_counters.usart_noise_errors;
+	current.usart_parity_errors = s_ble_comm_counters.usart_parity_errors;
+	current.at_retries = s_ble_comm_counters.at_retries;
+	current.at_fallbacks = s_ble_comm_counters.at_fallbacks;
+	current.at_failures = s_ble_comm_counters.at_failures;
+	current.sta_startup_failures = s_ble_comm_counters.sta_startup_failures;
+	current.sta_link_mismatches = s_ble_comm_counters.sta_link_mismatches;
+	current.sta_disconnects = s_ble_comm_counters.sta_disconnects;
+	BleProtocol_GetStats(&protocol);
+
+	LOG_I("t=%u BLE MON 30s IO rx_bytes=%u tx_bytes=%u valid_frames=%u tx_frames=%u",
+	      now,
+	      current.rx_bytes - s_ble_comm_previous.rx_bytes,
+	      current.tx_bytes - s_ble_comm_previous.tx_bytes,
+	      protocol.valid_frames - s_ble_protocol_previous.valid_frames,
+	      protocol.tx_frames - s_ble_protocol_previous.tx_frames);
+	LOG_I("t=%u BLE MON 30s FRAME sync=%u frame_len=%u cmd_len=%u version=%u crc=%u incomplete=%u unsupported=%u",
+	      now,
+	      protocol.sync_errors - s_ble_protocol_previous.sync_errors,
+	      protocol.length_errors - s_ble_protocol_previous.length_errors,
+	      protocol.command_length_errors -
+	      s_ble_protocol_previous.command_length_errors,
+	      protocol.version_errors - s_ble_protocol_previous.version_errors,
+	      protocol.crc_errors - s_ble_protocol_previous.crc_errors,
+	      protocol.frame_timeouts - s_ble_protocol_previous.frame_timeouts,
+	      protocol.unsupported_commands -
+	      s_ble_protocol_previous.unsupported_commands);
+	LOG_I("t=%u BLE MON 30s ERR rx_full=%u tx_drop=%u ore=%u fe=%u ne=%u pe=%u at_retry=%u at_fallback=%u at_failed=%u sta_boot=%u sta_mismatch=%u sta_disc=%u",
+	      now,
+	      current.rx_ring_overflows - s_ble_comm_previous.rx_ring_overflows,
+	      protocol.tx_dropped_frames - s_ble_protocol_previous.tx_dropped_frames,
+	      current.usart_overruns - s_ble_comm_previous.usart_overruns,
+	      current.usart_frame_errors - s_ble_comm_previous.usart_frame_errors,
+	      current.usart_noise_errors - s_ble_comm_previous.usart_noise_errors,
+	      current.usart_parity_errors - s_ble_comm_previous.usart_parity_errors,
+	      current.at_retries - s_ble_comm_previous.at_retries,
+	      current.at_fallbacks - s_ble_comm_previous.at_fallbacks,
+	      current.at_failures - s_ble_comm_previous.at_failures,
+	      current.sta_startup_failures -
+	      s_ble_comm_previous.sta_startup_failures,
+	      current.sta_link_mismatches -
+	      s_ble_comm_previous.sta_link_mismatches,
+	      current.sta_disconnects - s_ble_comm_previous.sta_disconnects);
+
+	s_ble_comm_previous = current;
+	s_ble_protocol_previous = protocol;
+}
+
 static void Communication_Task10ms(void)
 {
+	BleSta_Task10ms();
 	BleName_Task10ms();
+	BleComm_MonitorTask10ms();
 }
 
 static void AppEvent_Task10ms(void)

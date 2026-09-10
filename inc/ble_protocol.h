@@ -33,6 +33,20 @@ typedef struct
 	                   uint8_t status[BLE_PROTOCOL_STATUS_LENGTH]);
 } BleProtocolCallbacks_t;
 
+typedef struct
+{
+	uint32_t valid_frames;
+	uint32_t sync_errors;
+	uint32_t length_errors;
+	uint32_t command_length_errors;
+	uint32_t version_errors;
+	uint32_t crc_errors;
+	uint32_t frame_timeouts;
+	uint32_t unsupported_commands;
+	uint32_t tx_frames;
+	uint32_t tx_dropped_frames;
+} BleProtocolStats_t;
+
 void BleProtocol_Init(const BleProtocolCallbacks_t *callbacks);
 void BleProtocol_Reset(void);
 void BleProtocol_InputByte(uint8_t data, uint32_t now_ms);
@@ -40,7 +54,9 @@ void BleProtocol_Task(uint32_t now_ms);
 void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_SetRemoteDangerActive(uint8_t active);
 uint8_t BleProtocol_ReadTxByte(uint8_t *data);
+uint8_t BleProtocol_HasTxData(void);
 uint8_t BleProtocol_IsHeartbeatValid(uint32_t now_ms);
+void BleProtocol_GetStats(BleProtocolStats_t *stats);
 
 #ifdef __cplusplus
 }

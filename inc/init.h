@@ -63,6 +63,7 @@ extern "C" {
 #define READ_PB_PWRP					GPIO_ReadInputDataBit(PB_PWRP_PORT,PB_PWRP_PIN)
 #define READ_STDBY						GPIO_ReadInputDataBit(STDBY_PORT,STDBY_PIN)
 #define READ_CHARG						GPIO_ReadInputDataBit(CHARG_PORT,CHARG_PIN)
+#define READ_BLESTA                    GPIO_ReadInputDataBit(BLESTA_PORT,BLESTA_PIN)
 
 extern uint16_t TIM2_PrescalerValue;
 

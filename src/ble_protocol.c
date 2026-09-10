@@ -13,7 +13,12 @@
 #define BLE_COMMAND_LINK_KEEPALIVE      0x90U
 #define BLE_RX_FRAME_TIMEOUT_MS         200U
 #define BLE_HEARTBEAT_TIMEOUT_MS        3000U
-#define BLE_TX_BUFFER_SIZE              128U
+#define BLE_TX_BUFFER_SIZE              512U
+
+#if ((BLE_TX_BUFFER_SIZE & (BLE_TX_BUFFER_SIZE - 1U)) != 0U) || \
+    (BLE_TX_BUFFER_SIZE > 65536U)
+#error "BLE_TX_BUFFER_SIZE must be a power of two within uint16_t index range"
+#endif
 
 typedef BleProtocolResult_t (*BleCommandHandler_t)(const uint8_t *data,
 	                                                uint8_t length,
@@ -35,8 +40,8 @@ typedef struct
 	uint8_t expected_length;
 	uint32_t last_byte_ms;
 	uint8_t tx_buffer[BLE_TX_BUFFER_SIZE];
-	uint8_t tx_read_index;
-	uint8_t tx_write_index;
+	volatile uint16_t tx_read_index;
+	volatile uint16_t tx_write_index;
 	uint32_t last_heartbeat_ms;
 	uint32_t last_link_activity_ms;
 	uint8_t heartbeat_received;
@@ -45,6 +50,7 @@ typedef struct
 	uint8_t ui_action_pending;
 	uint8_t defer_response;
 	BleProtocolCallbacks_t callbacks;
+	BleProtocolStats_t stats;
 } BleProtocolContext_t;
 
 static BleProtocolContext_t s_ble;
@@ -110,10 +116,10 @@ static uint8_t BleProtocol_Crc8(const uint8_t *data, uint8_t length)
 	return crc;
 }
 
-static uint8_t BleProtocol_TxFree(void)
+static uint16_t BleProtocol_TxFree(void)
 {
-	return (uint8_t)((s_ble.tx_read_index - s_ble.tx_write_index - 1U) &
-	                 (BLE_TX_BUFFER_SIZE - 1U));
+	return (uint16_t)((s_ble.tx_read_index - s_ble.tx_write_index - 1U) &
+	                  (BLE_TX_BUFFER_SIZE - 1U));
 }
 
 static void BleProtocol_QueueResponse(uint8_t request_command,
@@ -129,6 +135,7 @@ static void BleProtocol_QueueResponse(uint8_t request_command,
 	if ((response_length > (BLE_MAX_DATA_LENGTH - 2U)) ||
 	    (BleProtocol_TxFree() < frame_length))
 	{
+		s_ble.stats.tx_dropped_frames++;
 		return;
 	}
 
@@ -149,9 +156,10 @@ static void BleProtocol_QueueResponse(uint8_t request_command,
 	for (index = 0U; index < frame_length; index++)
 	{
 		s_ble.tx_buffer[s_ble.tx_write_index] = frame[index];
-		s_ble.tx_write_index = (uint8_t)((s_ble.tx_write_index + 1U) &
-		                                      (BLE_TX_BUFFER_SIZE - 1U));
+		s_ble.tx_write_index = (uint16_t)((s_ble.tx_write_index + 1U) &
+		                                       (BLE_TX_BUFFER_SIZE - 1U));
 	}
+	s_ble.stats.tx_frames++;
 }
 
 static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
@@ -172,6 +180,7 @@ static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 		{
 			if (length != s_command_table[index].request_length)
 			{
+				s_ble.stats.command_length_errors++;
 				result = BLE_RESULT_BAD_LENGTH;
 			}
 			else
@@ -182,6 +191,10 @@ static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 			}
 			break;
 		}
+	}
+	if (result == BLE_RESULT_UNSUPPORTED)
+	{
+		s_ble.stats.unsupported_commands++;
 	}
 
 	if (s_ble.defer_response == 0U)
@@ -196,6 +209,7 @@ static void BleProtocol_ProcessFrame(uint32_t now_ms)
 
 	if (s_ble.frame[2] != BLE_PROTOCOL_VERSION)
 	{
+		s_ble.stats.version_errors++;
 		return;
 	}
 
@@ -203,8 +217,10 @@ static void BleProtocol_ProcessFrame(uint32_t now_ms)
 	                       (uint8_t)(s_ble.expected_length - 1U));
 	if (crc != s_ble.frame[s_ble.expected_length - 1U])
 	{
+		s_ble.stats.crc_errors++;
 		return;
 	}
+	s_ble.stats.valid_frames++;
 	s_ble.last_link_activity_ms = now_ms;
 	if (s_ble.link_active == 0U)
 	{
@@ -257,6 +273,7 @@ void BleProtocol_InputByte(uint8_t data, uint32_t now_ms)
 	{
 		if (data != BLE_FRAME_HEADER_1)
 		{
+			s_ble.stats.sync_errors++;
 			return;
 		}
 		s_ble.frame[0] = data;
@@ -271,6 +288,7 @@ void BleProtocol_InputByte(uint8_t data, uint32_t now_ms)
 		}
 		else if (data != BLE_FRAME_HEADER_1)
 		{
+			s_ble.stats.sync_errors++;
 			s_ble.frame_length = 0U;
 		}
 	}
@@ -281,6 +299,7 @@ void BleProtocol_InputByte(uint8_t data, uint32_t now_ms)
 		{
 			if (s_ble.frame[3] > BLE_MAX_DATA_LENGTH)
 			{
+				s_ble.stats.length_errors++;
 				s_ble.frame_length = 0U;
 				s_ble.expected_length = 0U;
 				return;
@@ -303,6 +322,7 @@ void BleProtocol_Task(uint32_t now_ms)
 	if ((s_ble.frame_length != 0U) &&
 	    ((uint32_t)(now_ms - s_ble.last_byte_ms) >= BLE_RX_FRAME_TIMEOUT_MS))
 	{
+		s_ble.stats.frame_timeouts++;
 		s_ble.frame_length = 0U;
 		s_ble.expected_length = 0U;
 	}
@@ -362,9 +382,22 @@ uint8_t BleProtocol_ReadTxByte(uint8_t *data)
 	}
 
 	*data = s_ble.tx_buffer[s_ble.tx_read_index];
-	s_ble.tx_read_index = (uint8_t)((s_ble.tx_read_index + 1U) &
-	                                (BLE_TX_BUFFER_SIZE - 1U));
+	s_ble.tx_read_index = (uint16_t)((s_ble.tx_read_index + 1U) &
+	                                 (BLE_TX_BUFFER_SIZE - 1U));
 	return 1U;
+}
+
+uint8_t BleProtocol_HasTxData(void)
+{
+	return (s_ble.tx_read_index != s_ble.tx_write_index) ? 1U : 0U;
+}
+
+void BleProtocol_GetStats(BleProtocolStats_t *stats)
+{
+	if (stats != 0)
+	{
+		*stats = s_ble.stats;
+	}
 }
 
 uint8_t BleProtocol_IsHeartbeatValid(uint32_t now_ms)

@@ -115,6 +115,10 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 	
+    GPIO_InitStructure.Pin       = BLESTA_PIN;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+    GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+
 		GPIO_InitStructure.Pin       = STDBY_PIN|CHARG_PIN;////
     /* CHARG/STDBY are active-low status inputs; keep their idle level defined. */
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IPU;
@@ -443,6 +447,7 @@ void USART2_Configuration(void)////上位�?
     /* Enable USARTz Receive interrupts */
     USART_ConfigInt(USART2, USART_INT_RXDNE, ENABLE);////开启接收中�?
 //    USART_ConfigInt(USART1, USART_INT_TXDE, ENABLE);///开启发送中�?
+    USART_ConfigInt(USART2, USART_INT_ERRF, ENABLE);
     /* Enable the USARTy */
     USART_Enable(USART2, ENABLE);
 }

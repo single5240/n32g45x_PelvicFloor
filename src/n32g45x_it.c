@@ -224,9 +224,41 @@ void SysTick_Handler(void)
 }*/
 void USART2_IRQHandler(void)
 {
-    if (USART_GetIntStatus(USART2, USART_INT_RXDNE) != RESET)
+    uint16_t status = USART2->STS;
+    uint8_t error_flags = 0U;
+
+    if ((status & USART_FLAG_OREF) != 0U)
+    {
+        error_flags |= APP_BLE_USART_ERROR_OVERRUN;
+    }
+    if ((status & USART_FLAG_FEF) != 0U)
+    {
+        error_flags |= APP_BLE_USART_ERROR_FRAME;
+    }
+    if ((status & USART_FLAG_NEF) != 0U)
+    {
+        error_flags |= APP_BLE_USART_ERROR_NOISE;
+    }
+    if ((status & USART_FLAG_PEF) != 0U)
+    {
+        error_flags |= APP_BLE_USART_ERROR_PARITY;
+    }
+    if (error_flags != 0U)
+    {
+        App_BleUsartErrorISR(error_flags);
+    }
+
+    if ((status & USART_FLAG_RXDNE) != 0U)
     {
         App_BleRxByteISR((uint8_t)USART_ReceiveData(USART2));
+    }
+    else if (error_flags != 0U)
+    {
+        (void)USART_ReceiveData(USART2);
+    }
+    if (USART_GetIntStatus(USART2, USART_INT_TXDE) != RESET)
+    {
+        App_BleTxReadyISR();
     }
 }
 /**

@@ -125,6 +125,9 @@ extern "C" {
 #define BLEEN_PORT                  GPIOB
 #define BLEEN_PIN                   GPIO_PIN_6
 
+#define BLESTA_PORT                 GPIOB
+#define BLESTA_PIN                  GPIO_PIN_7
+
 #define MOTOEN_PORT									GPIOB
 #define MOTOEN_PIN 									GPIO_PIN_9
 
@@ -151,6 +154,11 @@ extern "C" {
 #define BLE_REMOTE_TREATMENT_CONTROL_ENABLE 0U
 #define BLE_REMOTE_PRESSURE_CONTROL_ENABLE  0U
 
+#define APP_BLE_USART_ERROR_OVERRUN          0x01U
+#define APP_BLE_USART_ERROR_FRAME            0x02U
+#define APP_BLE_USART_ERROR_NOISE            0x04U
+#define APP_BLE_USART_ERROR_PARITY           0x08U
+
 #if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE > 1U) || \
     (BLE_REMOTE_PRESSURE_CONTROL_ENABLE > 1U)
 #error "BLE remote control gates must be 0 or 1"
@@ -159,6 +167,8 @@ extern "C" {
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
 void App_BleRxByteISR(uint8_t data);
+void App_BleTxReadyISR(void);
+void App_BleUsartErrorISR(uint8_t error_flags);
 
 
 
