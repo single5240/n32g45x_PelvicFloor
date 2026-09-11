@@ -2929,7 +2929,7 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 		{
 			return BLE_RESULT_CHARGING_LOCK;
 		}
-		if (BleProtocol_IsHeartbeatValid(s_system_tick_ms) == 0U)
+		if (s_ble_sta.stable_connected == 0U)
 		{
 			return BLE_RESULT_SAFETY_LOCK;
 		}
@@ -2966,7 +2966,7 @@ static void BleProtocol_RemoteDangerTimeout(void)
 	s_ble_pending_remote_danger = 0U;
 	s_ble_remote_danger_active = 0U;
 	s_app.ui_dirty = 1U;
-	LOG_W("t=%u BLE heartbeat timeout, dangerous outputs stopped",
+	LOG_W("t=%u BLE link reset, dangerous outputs stopped",
 	      s_system_tick_ms);
 }
 
@@ -2992,6 +2992,7 @@ static void BleProtocol_GetStatus(uint32_t now_ms,
 	                              uint8_t status[BLE_PROTOCOL_STATUS_LENGTH])
 {
 	uint8_t flags = 0U;
+	(void)now_ms;
 
 	status[0] = (uint8_t)s_app.state;
 	status[1] = s_ui.formula;
@@ -3022,7 +3023,7 @@ static void BleProtocol_GetStatus(uint32_t now_ms,
 	{
 		flags |= 0x02U;
 	}
-	if (BleProtocol_IsHeartbeatValid(now_ms) != 0U)
+	if (s_ble_sta.stable_connected != 0U)
 	{
 		flags |= 0x04U;
 	}
@@ -3106,6 +3107,7 @@ static void BleSta_Task10ms(void)
 		else
 		{
 			s_ble_comm_counters.sta_disconnects++;
+			BleProtocol_Reset();
 		}
 	}
 
@@ -3450,8 +3452,13 @@ static void Power_Task1000ms(void)
 	}
 
 	Ui_Countdown1s();
+	if ((s_ble_name.protocol_active != 0U) &&
+	    (s_ble_sta.stable_connected != 0U))
+	{
+		BleProtocol_NotifyStatus(s_system_tick_ms);
+	}
 
-	/* TODO：低电量、自动关机和蓝牙心跳在对应模块完成后接入 */
+	/* TODO：低电量和自动关机在对应模块完成后接入 */
 }
 
 int main(void)

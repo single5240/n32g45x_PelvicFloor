@@ -116,6 +116,25 @@ static void AssertResponse(uint8_t request_command, uint8_t result,
 	assert(response[length - 1U] == Crc8(response, length - 1U));
 }
 
+static void AssertStatusNotification(void)
+{
+	uint8_t response[38U];
+	size_t length = ReadResponse(response, sizeof(response));
+	uint8_t index;
+
+	assert(length == (size_t)(6U + BLE_PROTOCOL_STATUS_LENGTH));
+	assert(response[0] == 0x5AU);
+	assert(response[1] == 0xA5U);
+	assert(response[2] == BLE_PROTOCOL_VERSION);
+	assert(response[3] == BLE_PROTOCOL_STATUS_LENGTH);
+	assert(response[4] == BLE_COMMAND_STATUS_NOTIFY);
+	for (index = 0U; index < BLE_PROTOCOL_STATUS_LENGTH; index++)
+	{
+		assert(response[5U + index] == ((index == 12U) ? 0U : index));
+	}
+	assert(response[length - 1U] == Crc8(response, length - 1U));
+}
+
 int main(void)
 {
 	BleProtocolCallbacks_t callbacks;
@@ -142,6 +161,8 @@ int main(void)
 	AssertResponse(0x71U, BLE_RESULT_OK, BLE_PROTOCOL_STATUS_LENGTH);
 	assert(BleProtocol_HasTxData() == 0U);
 	assert(s_link_state == 1U);
+	BleProtocol_NotifyStatus(50U);
+	AssertStatusNotification();
 
 	SendFrame(0x90U, 0, 0U, 100U);
 	AssertResponse(0x90U, BLE_RESULT_OK, 0U);
@@ -189,14 +210,11 @@ int main(void)
 	SendFrame(0x90U, 0, 0U, 1000U);
 	AssertResponse(0x90U, BLE_RESULT_OK, 0U);
 	BleProtocol_SetRemoteDangerActive(1U);
-	BleProtocol_Task(3999U);
-	assert(s_danger_timeout_count == 0U);
 	BleProtocol_Task(4000U);
+	assert(s_danger_timeout_count == 0U);
 	assert(s_link_state == 0U);
-	assert(s_danger_timeout_count == 1U);
-	BleProtocol_SetRemoteDangerActive(1U);
 	BleProtocol_Reset();
-	assert(s_danger_timeout_count == 2U);
+	assert(s_danger_timeout_count == 1U);
 	BleProtocol_GetStats(&stats);
 	assert(stats.valid_frames != 0U);
 	assert(stats.crc_errors == 1U);

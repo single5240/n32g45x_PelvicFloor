@@ -10,6 +10,7 @@ extern "C" {
 #define BLE_PROTOCOL_VERSION          0x11U
 #define BLE_PROTOCOL_STATUS_LENGTH    15U
 #define BLE_COMMAND_UI_ACTION         0x10U
+#define BLE_COMMAND_STATUS_NOTIFY     0x91U
 
 typedef enum
 {
@@ -56,6 +57,7 @@ void BleProtocol_Reset(void);
 void BleProtocol_InputByte(uint8_t data, uint32_t now_ms);
 void BleProtocol_Task(uint32_t now_ms);
 void BleProtocol_CompleteUiAction(uint32_t now_ms);
+void BleProtocol_NotifyStatus(uint32_t now_ms);
 void BleProtocol_SetRemoteDangerActive(uint8_t active);
 uint8_t BleProtocol_ReadTxByte(uint8_t *data);
 uint8_t BleProtocol_HasTxData(void);

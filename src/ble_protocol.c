@@ -162,6 +162,42 @@ static void BleProtocol_QueueResponse(uint8_t request_command,
 	s_ble.stats.tx_frames++;
 }
 
+static void BleProtocol_QueueNotification(uint8_t command,
+	                                       const uint8_t *data,
+	                                       uint8_t data_length)
+{
+	uint8_t frame[BLE_MAX_FRAME_LENGTH];
+	uint8_t frame_length = (uint8_t)(6U + data_length);
+	uint8_t index;
+
+	if ((data_length > BLE_MAX_DATA_LENGTH) ||
+	    (BleProtocol_TxFree() < frame_length))
+	{
+		s_ble.stats.tx_dropped_frames++;
+		return;
+	}
+
+	frame[0] = BLE_FRAME_HEADER_1;
+	frame[1] = BLE_FRAME_HEADER_2;
+	frame[2] = BLE_PROTOCOL_VERSION;
+	frame[3] = data_length;
+	frame[4] = command;
+	for (index = 0U; index < data_length; index++)
+	{
+		frame[5U + index] = data[index];
+	}
+	frame[frame_length - 1U] = BleProtocol_Crc8(frame,
+	                                          (uint8_t)(frame_length - 1U));
+
+	for (index = 0U; index < frame_length; index++)
+	{
+		s_ble.tx_buffer[s_ble.tx_write_index] = frame[index];
+		s_ble.tx_write_index = (uint16_t)((s_ble.tx_write_index + 1U) &
+		                                       (BLE_TX_BUFFER_SIZE - 1U));
+	}
+	s_ble.stats.tx_frames++;
+}
+
 static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 {
 	uint8_t command = frame[4];
@@ -341,15 +377,6 @@ void BleProtocol_Task(uint32_t now_ms)
 			s_ble.callbacks.link_state(0U);
 		}
 	}
-	if ((s_ble.remote_danger_active != 0U) &&
-	    (BleProtocol_IsHeartbeatValid(now_ms) == 0U))
-	{
-		s_ble.remote_danger_active = 0U;
-		if (s_ble.callbacks.remote_danger_timeout != 0)
-		{
-			s_ble.callbacks.remote_danger_timeout();
-		}
-	}
 }
 
 void BleProtocol_CompleteUiAction(uint32_t now_ms)
@@ -372,6 +399,20 @@ void BleProtocol_CompleteUiAction(uint32_t now_ms)
 		                          response, BLE_PROTOCOL_STATUS_LENGTH);
 	}
 	s_ble.ui_action_pending = 0U;
+}
+
+void BleProtocol_NotifyStatus(uint32_t now_ms)
+{
+	uint8_t status[BLE_PROTOCOL_STATUS_LENGTH];
+
+	if (s_ble.callbacks.get_status == 0)
+	{
+		return;
+	}
+
+	s_ble.callbacks.get_status(now_ms, status);
+	BleProtocol_QueueNotification(BLE_COMMAND_STATUS_NOTIFY, status,
+	                              BLE_PROTOCOL_STATUS_LENGTH);
 }
 
 void BleProtocol_SetRemoteDangerActive(uint8_t active)
