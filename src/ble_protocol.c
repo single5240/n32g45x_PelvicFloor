@@ -172,6 +172,11 @@ static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 	BleProtocolResult_t result = BLE_RESULT_UNSUPPORTED;
 	s_ble.defer_response = 0U;
 
+	if (s_ble.callbacks.on_command != 0)
+	{
+		s_ble.callbacks.on_command(command, &frame[5], length, now_ms);
+	}
+
 	for (index = 0U;
 	     index < (uint8_t)(sizeof(s_command_table) / sizeof(s_command_table[0]));
 	     index++)

@@ -130,6 +130,7 @@ int main(void)
 	callbacks.link_state = LinkState;
 	callbacks.remote_danger_timeout = RemoteDangerTimeout;
 	callbacks.get_status = GetStatus;
+	callbacks.on_command = 0;
 	BleProtocol_Init(&callbacks);
 	assert(BleProtocol_HasTxData() == 0U);
 	assert(Crc8((const uint8_t *)"\x5A\xA5\x11\x00\x71", 5U) == 0x0FU);

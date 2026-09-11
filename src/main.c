@@ -516,6 +516,8 @@ static void BleProtocol_TxTask(void);
 static void BleProtocol_StopAll(void);
 static BleProtocolResult_t BleProtocol_UiAction(uint8_t action);
 static void BleProtocol_LinkState(uint8_t connected);
+static void BleProtocol_OnCommand(uint8_t command, const uint8_t *data,
+                                  uint8_t length, uint32_t now_ms);
 static void BleProtocol_RemoteDangerTimeout(void);
 static void BleProtocol_UpdateRemoteDanger(void);
 static void BleProtocol_GetStatus(uint32_t now_ms,
@@ -775,6 +777,7 @@ static void App_Init(void)
 	ble_callbacks.link_state = BleProtocol_LinkState;
 	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
 	ble_callbacks.get_status = BleProtocol_GetStatus;
+	ble_callbacks.on_command = BleProtocol_OnCommand;
 	BleProtocol_Init(&ble_callbacks);
 	s_ble_monitor_last_ms = s_system_tick_ms;
 
@@ -2942,6 +2945,18 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 static void BleProtocol_LinkState(uint8_t connected)
 {
 	s_ble_protocol_link_active = (connected != 0U) ? 1U : 0U;
+}
+
+/* 蓝牙通讯日志：每条收到的命令和 UI_ACTION 都带时间戳打印，便于联调定位。 */
+static void BleProtocol_OnCommand(uint8_t command, const uint8_t *data,
+                                  uint8_t length, uint32_t now_ms)
+{
+	LOG_I("t=%u BLE RX cmd=0x%02X len=%u", now_ms, command, length);
+	if ((command == BLE_COMMAND_UI_ACTION) && (length >= 1U) &&
+	    (data != 0))
+	{
+		LOG_I("t=%u BLE UI_ACTION action=%u", now_ms, data[0]);
+	}
 }
 
 static void BleProtocol_RemoteDangerTimeout(void)

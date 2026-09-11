@@ -9,6 +9,7 @@ extern "C" {
 
 #define BLE_PROTOCOL_VERSION          0x11U
 #define BLE_PROTOCOL_STATUS_LENGTH    15U
+#define BLE_COMMAND_UI_ACTION         0x10U
 
 typedef enum
 {
@@ -31,6 +32,9 @@ typedef struct
 	void (*remote_danger_timeout)(void);
 	void (*get_status)(uint32_t now_ms,
 	                   uint8_t status[BLE_PROTOCOL_STATUS_LENGTH]);
+	/* 可选：通报每一个已通过帧解析的接收命令，供应用层记录通讯日志。 */
+	void (*on_command)(uint8_t command, const uint8_t *data,
+	                   uint8_t length, uint32_t now_ms);
 } BleProtocolCallbacks_t;
 
 typedef struct
