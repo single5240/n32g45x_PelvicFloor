@@ -149,6 +149,18 @@ extern "C" {
 #define TREATMENT_CHANNEL_2         1U
 /* 台架联调：启用双通道 DAC 包络输出；量产前仍需完成负载幅值验证。 */
 #define TREATMENT_DAC_OUTPUT_ENABLE 1U
+/* 台架联调：置 1 后两路 DAC 使用固定码值；量产构建必须保持关闭。 */
+#define TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE 0U
+#define TREATMENT_DAC_FIXED_VALUE             2000U
+
+#if (TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE > 1U)
+#error "TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE must be 0 or 1"
+#endif
+
+#if (TREATMENT_DAC_FIXED_VALUE > 3800U)
+#error "TREATMENT_DAC_FIXED_VALUE must not exceed 3800"
+#endif
+
 /* Remote dangerous actions stay disabled until the corresponding hardware
  * calibration and bench verification have been completed. */
 #define BLE_REMOTE_TREATMENT_CONTROL_ENABLE 0U

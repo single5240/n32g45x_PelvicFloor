@@ -677,11 +677,15 @@ void TIM1_UP_IRQHandler(void)
 			default:
 				break;
 			}
+#if (TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE != 0U)
+			ChA_DACValue = TREATMENT_DAC_FIXED_VALUE;
+#else
 			ChA_DACValue = 3400 - Pwr1_ADCValue;
 			if (ChA_DACValue < 10)
 			{
 				ChA_DACValue = 300;
 			}
+#endif
 #if (TREATMENT_DAC_OUTPUT_ENABLE != 0U)
 			DAC_SetCh2Data(DAC_ALIGN_R_12BIT, ChA_DACValue);
 #endif
@@ -1009,11 +1013,15 @@ void TIM8_UP_IRQHandler(void)
 			default:
 				break;
 			}
+#if (TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE != 0U)
+			ChB_DACValue = TREATMENT_DAC_FIXED_VALUE;
+#else
 			ChB_DACValue = 3400 - Pwr2_ADCValue;
 			if (ChB_DACValue < 10)
 			{
 				ChB_DACValue = 300;
 			}
+#endif
 #if (TREATMENT_DAC_OUTPUT_ENABLE != 0U)
 			DAC_SetCh1Data(DAC_ALIGN_R_12BIT, ChB_DACValue);
 #endif
