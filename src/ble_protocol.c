@@ -421,6 +421,22 @@ void BleProtocol_NotifyStatus(uint32_t now_ms)
 	                              BLE_PROTOCOL_STATUS_LENGTH);
 }
 
+void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
+                                      uint16_t pressure_max,
+                                      uint16_t pressure_average)
+{
+	uint8_t data[6];
+
+	data[0] = (uint8_t)(duration_seconds & 0xFFU);
+	data[1] = (uint8_t)(duration_seconds >> 8U);
+	data[2] = (uint8_t)(pressure_max & 0xFFU);
+	data[3] = (uint8_t)(pressure_max >> 8U);
+	data[4] = (uint8_t)(pressure_average & 0xFFU);
+	data[5] = (uint8_t)(pressure_average >> 8U);
+	BleProtocol_QueueNotification(BLE_COMMAND_PRESSURE_RESULT_NOTIFY,
+	                              data, (uint8_t)sizeof(data));
+}
+
 void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile)
 {
 	uint8_t data[2];
@@ -539,7 +555,7 @@ static BleProtocolResult_t BleCommand_UiAction(const uint8_t *data,
 	(void)response;
 	(void)response_length;
 
-	if ((data[0] == 0U) || (data[0] > 7U))
+	if ((data[0] == 0U) || (data[0] > 8U))
 	{
 		return BLE_RESULT_BAD_PARAMETER;
 	}

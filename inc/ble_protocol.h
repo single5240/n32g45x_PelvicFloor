@@ -12,6 +12,7 @@ extern "C" {
 #define BLE_COMMAND_SET_STRENGTH       0x01U
 #define BLE_COMMAND_UI_ACTION         0x10U
 #define BLE_COMMAND_STATUS_NOTIFY     0x91U
+#define BLE_COMMAND_PRESSURE_RESULT_NOTIFY 0x92U
 #define BLE_COMMAND_THERAPY_START_NOTIFY 0x93U
 #define BLE_COMMAND_THERAPY_END_NOTIFY 0x94U
 
@@ -62,6 +63,9 @@ void BleProtocol_InputByte(uint8_t data, uint32_t now_ms);
 void BleProtocol_Task(uint32_t now_ms);
 void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_NotifyStatus(uint32_t now_ms);
+void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
+                                      uint16_t pressure_max,
+                                      uint16_t pressure_average);
 void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile);
 void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds);
 void BleProtocol_SetRemoteDangerActive(uint8_t active);

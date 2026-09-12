@@ -152,6 +152,7 @@ typedef enum
 	APP_EVENT_START_LONG,
 	APP_EVENT_PLUS_SHORT,
 	APP_EVENT_MINUS_SHORT,
+	APP_EVENT_PRESSURE_TEST_STOP,
 	APP_EVENT_CHARGER_CONNECTED,
 	APP_EVENT_CHARGER_DISCONNECTED
 } AppEvent_t;
@@ -213,6 +214,7 @@ typedef struct
 #define BLE_ACTION_FLAG_POWER_OFF_LOCK    0x01U
 #define BLE_ACTION_FLAG_TREATMENT_DANGER  0x02U
 #define BLE_ACTION_FLAG_PRESSURE_DANGER   0x04U
+#define BLE_ACTION_FLAG_LINK_REQUIRED     0x08U
 
 typedef struct
 {
@@ -240,7 +242,9 @@ static const BleActionEntry_t s_ble_action_table[] =
 	 BLE_ACTION_FLAG_PRESSURE_DANGER},
 	{6U, APP_EVENT_PLUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY),
 	 BLE_ACTION_FLAG_TREATMENT_DANGER},
-	{7U, APP_EVENT_MINUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY), 0U}
+	{7U, APP_EVENT_MINUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY), 0U},
+	{8U, APP_EVENT_PRESSURE_TEST_STOP, APP_STATE_MASK(APP_STATE_PRESSURE),
+	 BLE_ACTION_FLAG_LINK_REQUIRED}
 };
 
 typedef enum
@@ -1146,6 +1150,7 @@ static void Pressure_StartTest(uint16_t first_sample_mmhg)
 static void Pressure_EndTest(const char *reason)
 {
 	uint32_t elapsed_ms;
+	uint32_t elapsed_seconds;
 
 	if (s_pressure_process.state != PRESSURE_PROCESS_TESTING)
 	{
@@ -1172,6 +1177,19 @@ static void Pressure_EndTest(const char *reason)
 	s_ui.pressure_value_blink = 0U;
 	s_ui.pressure_value = s_pressure_process.average_mmhg;
 	s_app.ui_dirty = 1U;
+	elapsed_seconds = elapsed_ms / 1000U;
+	if (elapsed_seconds > 65535U)
+	{
+		elapsed_seconds = 65535U;
+	}
+	if ((s_pressure_process.sample_count != 0U) &&
+	    (s_ble_name.protocol_active != 0U) &&
+	    (s_ble_sta.stable_connected != 0U))
+	{
+		BleProtocol_NotifyPressureResult((uint16_t)elapsed_seconds,
+		                                 s_pressure_process.maximum_mmhg,
+		                                 s_pressure_process.average_mmhg);
+	}
 	LOG_I("t=%u pressure test end reason=%s duration=%u ms samples=%u average=%u max=%u mmHg",
 	      s_system_tick_ms, reason, elapsed_ms,
 	      s_pressure_process.sample_count,
@@ -1378,6 +1396,7 @@ static const char *App_EventName(AppEvent_t event)
 		case APP_EVENT_START_LONG:           return "START_LONG";
 		case APP_EVENT_PLUS_SHORT:           return "PLUS_SHORT";
 		case APP_EVENT_MINUS_SHORT:          return "MINUS_SHORT";
+		case APP_EVENT_PRESSURE_TEST_STOP:   return "PRESSURE_TEST_STOP";
 		case APP_EVENT_CHARGER_CONNECTED:    return "CHARGER_CONNECTED";
 		case APP_EVENT_CHARGER_DISCONNECTED: return "CHARGER_DISCONNECTED";
 		default:                             return "NONE";
@@ -1967,6 +1986,15 @@ static void App_HandleEvent(AppEvent_t event)
 				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
 				      (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
+			}
+			break;
+
+		case APP_EVENT_PRESSURE_TEST_STOP:
+			if ((s_app.state == APP_STATE_PRESSURE) &&
+			    (s_pressure_process.state == PRESSURE_PROCESS_TESTING))
+			{
+				Ui_Beep(1U);
+				Pressure_EndTest("remote");
 			}
 			break;
 
@@ -3529,6 +3557,11 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 	{
 		return BLE_RESULT_STATE_CONFLICT;
 	}
+	if ((action == 8U) &&
+	    (s_pressure_process.state != PRESSURE_PROCESS_TESTING))
+	{
+		return BLE_RESULT_STATE_CONFLICT;
+	}
 	if ((entry->flags & BLE_ACTION_FLAG_POWER_OFF_LOCK) != 0U)
 	{
 #if (BLE_REMOTE_POWER_OFF_CONTROL_ENABLE == 0U)
@@ -3561,6 +3594,11 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 		{
 			return BLE_RESULT_SAFETY_LOCK;
 		}
+	}
+	if (((entry->flags & BLE_ACTION_FLAG_LINK_REQUIRED) != 0U) &&
+	    (s_ble_sta.stable_connected == 0U))
+	{
+		return BLE_RESULT_SAFETY_LOCK;
 	}
 	if (EventQueue_Push(entry->event) == 0U)
 	{
@@ -3651,6 +3689,10 @@ static void BleProtocol_GetStatus(uint32_t now_ms,
 	if (Pwr2 != 0U)
 	{
 		flags |= 0x10U;
+	}
+	if (s_ui.pressure_value_blink != 0U)
+	{
+		flags |= 0x40U;
 	}
 	status[12] = flags;
 	status[13] = 0U;
