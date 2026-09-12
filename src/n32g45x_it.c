@@ -1411,6 +1411,7 @@ void TIM5_IRQHandler(void) /// 作为通用定时器使用
 			jj = 0;
 			Flash_Flag = !Flash_Flag; ////图标闪烁
 		}
+#if (BUZZER_OUTPUT_ENABLE != 0U)
 		if (Buzz_cnt) ////蜂鸣器响
 		{
 			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_ENABLE); ////打开蜂鸣器
@@ -1418,6 +1419,7 @@ void TIM5_IRQHandler(void) /// 作为通用定时器使用
 			if (Buzz_cnt == 0)
 				TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE); ////关闭蜂鸣器
 		}
+#endif
 		if (MotoStop_Cnt) /*开启电磁阀操作*/
 		{
 			MotoStop_Cnt--;

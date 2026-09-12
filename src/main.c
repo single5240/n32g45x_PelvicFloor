@@ -1276,7 +1276,9 @@ static void App_StateEnter(AppState_t state)
 			s_ui.beep_remaining = 0U;
 			s_ui.beep_on_ms = 0U;
 			s_ui.beep_gap_ms = 0U;
+#if (BUZZER_OUTPUT_ENABLE != 0U)
 			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);
+#endif
 			s_app.ui_dirty = 1U;
 			break;
 
@@ -1846,12 +1848,14 @@ static void Ui_InitHardware(void)
 		s_ui.lcd_initialized = 1U;
 	}
 
+#if (BUZZER_OUTPUT_ENABLE != 0U)
 	if (s_ui.buzzer_initialized == 0U)
 	{
 		TIM3_Configuration();
 		TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);
 		s_ui.buzzer_initialized = 1U;
 	}
+#endif
 
 	/* UI 开启期间背光常亮，不再使用无操作倒计时单独关闭背光�? */
 	BLEN_ON;
@@ -2816,6 +2820,10 @@ uint8_t AppBattery_GetPercent(void)
 
 static void Ui_Beep(uint8_t count)
 {
+#if (BUZZER_OUTPUT_ENABLE == 0U)
+	(void)count;
+	return;
+#else
 	if ((s_ui.buzzer_initialized == 0U) || (count == 0U))
 	{
 		return;
@@ -2825,10 +2833,14 @@ static void Ui_Beep(uint8_t count)
 	s_ui.beep_on_ms = UI_BEEP_ON_MS;
 	s_ui.beep_gap_ms = 0U;
 	TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_ENABLE);
+#endif
 }
 
 static void Ui_BuzzerTask10ms(void)
 {
+#if (BUZZER_OUTPUT_ENABLE == 0U)
+	return;
+#else
 	if (s_ui.buzzer_initialized == 0U)
 	{
 		return;
@@ -2873,6 +2885,7 @@ static void Ui_BuzzerTask10ms(void)
 			s_ui.beep_gap_ms -= KEY_SCAN_PERIOD_MS;
 		}
 	}
+#endif
 }
 
 static void Ui_Countdown1s(void)

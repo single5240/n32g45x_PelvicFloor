@@ -199,6 +199,8 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 /* With the nominal 40 kHz LSI and /32 prescaler, 2499 gives about 2 s. */
 #define APP_IWDG_ENABLE                       1U
 #define APP_IWDG_RELOAD_VALUE                 2499U
+/* Diagnostic gate: keep the buzzer timer and PB1 output disabled when 0. */
+#define BUZZER_OUTPUT_ENABLE                  0U
 /* ARM Cortex-M4 r0p0/r0p1 erratum 838869: disable the default write buffer. */
 #define APP_CORTEX_M4_838869_WORKAROUND_ENABLE 1U
 
@@ -215,6 +217,10 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 #if (APP_IWDG_ENABLE > 1U)
 #error "APP_IWDG_ENABLE must be 0 or 1"
+#endif
+
+#if (BUZZER_OUTPUT_ENABLE > 1U)
+#error "BUZZER_OUTPUT_ENABLE must be 0 or 1"
 #endif
 
 #if (APP_CORTEX_M4_838869_WORKAROUND_ENABLE > 1U)

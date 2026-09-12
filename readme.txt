@@ -113,6 +113,7 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |
 | `APP_CORTEX_M4_838869_WORKAROUND_ENABLE` | `1` | 对 Cortex-M4 r0p0/r0p1 启用 838869 全局写缓冲规避；可能轻微增加写入延迟。 |
+| `BUZZER_OUTPUT_ENABLE` | `0` | 关闭蜂鸣器；TIM3 不启用，PB1 保持低电平。 |
 
 上述蓝牙宏只控制编译门禁，不取消运行时安全检查。治疗或压力输出前仍会检查充电状态、PB7 连接状态及当前应用状态。
 

@@ -65,8 +65,10 @@ void RCC_Configuration(void)
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_TIM8, ENABLE);
     /* TIM2 clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM2, ENABLE);
+#if (BUZZER_OUTPUT_ENABLE != 0U)
     /* TIM3 clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM3, ENABLE);
+#endif
 //    /* TIM4 clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM4, ENABLE);
     /* TIM6 Periph clock enable */
@@ -139,11 +141,23 @@ void GPIO_Configuration(void)
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
 
-		/* Keep the existing peripheral functions for buzzer and motor PWM. */
-		GPIO_InitStructure.Pin       = BUZZ_PIN|MOTOEN_PIN;
+		/* Keep the motor PWM alternate function independent of the buzzer gate. */
+		GPIO_InitStructure.Pin       = MOTOEN_PIN;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+
+#if (BUZZER_OUTPUT_ENABLE != 0U)
+	GPIO_InitStructure.Pin       = BUZZ_PIN;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+	GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+#else
+	/* Drive PB1 low as a defined silent state without enabling TIM3. */
+	GPIO_InitStructure.Pin       = BUZZ_PIN;
+	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
+	GPIO_InitPeripheral(GPIOB, &GPIO_InitStructure);
+	GPIO_ResetBits(BUZZ_PORT, BUZZ_PIN);
+#endif
 		
 		GPIO_InitStructure.Pin       = TM1621B_CS_PIN|TM1621B_CLK_PIN|TM1621B_DATA_PIN;/////
     GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
