@@ -1,30 +1,123 @@
-1、功能说明
-    1、ADC1采样转换PC0 PC1引脚的模拟电压，ADC2采样转换PC2 PC3引脚的模拟电压，ADC3采样转换PD10 PD11引脚的模拟电压，ADC4采样转换PD12 PD13引脚的模拟电压
-    2、采用软件触发一次，采集一次的方式
-2、使用环境
-    软件开发环境：  KEIL MDK-ARM V5.26.2.0
-    硬件环境：      基于N32G4XV-STB V1.0 EVB开发
-3、使用说明
-    系统配置；
-        1、时钟源：
-            HSE=8M,PLL=144M,AHB=144M,APB1=36M,APB2=72M,ADC CLK=144M/16,ADC 1M CLK=HSE/8
-        2、端口配置：
-            PC0选择为模拟功能ADC1转换通道
-            PC1选择为模拟功能ADC1转换通道
-            PC2选择为模拟功能ADC2转换通道
-            PC3选择为模拟功能ADC2转换通道
-            PD10选择为模拟功能ADC3转换通道
-            PD11选择为模拟功能ADC3转换通道
-            PD12选择为模拟功能ADC4转换通道
-            PD13选择为模拟功能ADC4转换通道
-        3、ADC：
-            ADC1独立工作模式、软件触发转换、12位数据右对齐，转换PC0 PC1的模拟电压数据
-            ADC2独立工作模式、软件触发转换、12位数据右对齐，转换PC2 PC3的模拟电压数据
-            ADC3独立工作模式、软件触发转换、12位数据右对齐，转换PD10 PD11的模拟电压数据
-            ADC4独立工作模式、软件触发转换、12位数据右对齐，转换PD12 PD13的模拟电压数据
-    使用方法：
-        1、编译后打开调试模式，将变量ADC1ConvertedValue,ADC2ConvertedValue,ADC3ConvertedValue,ADC4ConvertedValue添加到watch窗口观察
-        2、通过改变PC0,PC1,PC2,PC3,PD10,PD11,PD12,PD13引脚的电压，可以看到转换结果变量同步改变
-4、注意事项
-    当系统采用HSE时钟时（一般HSI也是打开的），RCC_ConfigAdc1mClk(RCC_ADC1MCLK_SRC_HSE, RCC_ADC1MCLK_DIV8)可以配置为HSE或者HSI
-    当系统采用HSI时钟时（一般HSE是关闭的），RCC_ConfigAdc1mClk(RCC_ADC1MCLK_SRC_HSI, RCC_ADC1MCLK_DIV8)只能配置为HSI
+# QW-316 主控固件
+
+面向 HV1.01 硬件的手持盆底治疗仪主控固件。目标 MCU 为 Nations N32G455CCL7（Cortex-M4），采用裸机协作式架构，覆盖治疗双通道输出、压力检测、按键/LCD、充电与电池、蓝牙通讯等功能。
+
+> 治疗高压、DAC 幅值、压力换算、气泵和电磁阀真值表仍需以原理图和台架实测为准。本仓库中的联调开关及参数不代表量产验收结论。
+
+## 1. 编译与下载环境
+
+| 项目 | 当前配置 |
+| --- | --- |
+| 主工程 | `MDK-ARM/Main.uvprojx` |
+| 默认 Target | `N32G45x` |
+| MCU | `N32G455CCL7` |
+| 工具链 | Keil MDK-ARM，ARM Compiler 5（当前验证环境：V5.06 update 6） |
+| 备用工程 | `EWARM/ADC_SingleRead.ewp`，仅保留，不作为默认维护入口 |
+| 下载/调试 | SWD；工程关闭 JTAG、保留 SWD |
+
+### 编译步骤
+
+1. 使用 Keil 打开 `MDK-ARM/Main.uvprojx`。
+2. 选择 `N32G45x` target，执行 **Rebuild**。
+3. 编译生成物位于 `MDK-ARM/Objects/`，均已被 `.gitignore` 忽略，不提交到仓库。
+
+命令行验证示例（本机安装 Keil 后）：
+
+```powershell
+C:\Keil_v5\UV4\UV4.exe -b MDK-ARM\Main.uvprojx -j0
+```
+
+Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时钟由 `firmware/CMSIS/device/system_n32g45x.c` 决定，当前为内部 8 MHz HSI 经 PLL 得到 128 MHz，`SystemCoreClock` 为 128 MHz。
+
+## 2. 工程结构
+
+| 路径 | 职责 |
+| --- | --- |
+| `src/main.c` | 应用状态机、周期调度、按键/UI、电池、压力、蓝牙业务与统一安全关断 |
+| `src/n32g45x_it.c` | SysTick、USART2、TIM1/TIM8 治疗波形中断 |
+| `src/init.c` | 时钟、GPIO、ADC、DAC、定时器、USART2、NVIC 初始化 |
+| `inc/` | 应用、板级引脚、外设声明和联调宏定义 |
+| `firmware/` | N32 CMSIS 与标准外设库 |
+| `docs/` | 状态机实现与蓝牙协议说明 |
+| `MDK-ARM/` | Keil 工程文件 |
+| `middlewares/`、`compoennts/` | 第三方组件与 RTT 日志；`compoennts` 为历史目录名，请勿改名 |
+
+## 3. 系统架构
+
+系统没有 RTOS。`SysTick_Handler()` 每 1 ms 只递增时基；主循环执行 `App_RunOnce()`，空闲时通过 `__WFI()` 等待中断。
+
+| 周期 | 主要工作 |
+| --- | --- |
+| 每轮主循环 | 蓝牙 TX 队列发送 |
+| 10 ms | 按键/充电检测、蓝牙解析、事件队列、状态切换、治疗/压力控制、远程动作应答 |
+| 50 ms | LCD 刷新、闪烁 |
+| 100 ms | 电池 ADC、压力 ADC 采样协调 |
+| 1000 ms | 治疗倒计时、充电动画 |
+
+输入均转换为 `AppEvent_t`，由应用状态机集中处理；蓝牙 `UI_ACTION` 与实体按键复用同一事件路径，不能直接改写硬件寄存器。
+
+主要状态：`POWER_OFF`、`BOOTING`、`READY`、`THERAPY`、`PRESSURE`、`CHARGING`、`FAULT`。治疗、压力、关机、充电和故障路径均应汇聚到 `Treatment_StopOutputs()`、`Pressure_StopOutputs()` 或 `Board_EnterSafeState()`。
+
+## 4. 功能使用
+
+### 治疗
+
+- 治疗页面支持 P1～P3、双通道选择与 0～60 档强度。
+- CH1 使用 TIM1，幅值链路为 PA5/DAC 通道 2；CH2 使用 TIM8，幅值链路为 PA4/DAC 通道 1。
+- 桥臂换向采用“当前桥臂关闭 → 全关断死区 → 另一桥臂开启”。TIM1/TIM8 的 CC3 比较中断仅用于结束死区。
+- 每个通道的两侧桥臂必须互斥，禁止同时导通。
+
+### 压力与电池
+
+- ADC1 用于电池电压及 PA6 外部参考采样；ADC2 用于 PA2 压力传感器采样。
+- BATEN（PB2）在开机、工作和充电电池会话期间持续有效，关机或故障安全状态关闭，避免周期性通断干扰模拟前端。
+- 压力换算值、过压阈值和阀门有效电平尚待硬件确认；未确认前不得以显示数值作为医疗或安全依据。
+
+### 本机按键
+
+| 按键 | 治疗页 | 压力页 |
+| --- | --- | --- |
+| 电源短按 | 循环设置 10/20/30 min | 同左 |
+| 电源长按 | 开机或关机 | 开机或关机 |
+| 功能短按 | 切换至压力页，并停止治疗输出 | 切换至治疗页，并停止压力输出 |
+| 启动/停止短按 | 循环 P1→P2→P3，并清零强度 | 启动或停止充气 |
+| 启动/停止长按 | 切换当前调节通道 | 请求放气 |
+| 加/减短按 | 调整选中通道强度（0～60） | 无强度调节 |
+
+### 蓝牙
+
+- USART2：115200、8N1、无硬件流控，PB4/PB5 使用第三重映射。
+- 协议说明见 `docs/蓝牙通讯协议V1.1.2.md`。
+- 远程关机、治疗和压力 UI 动作当前已开放，但治疗/压力危险动作仍要求状态合法、未处于充电互锁且 PB7 物理连接有效；断链会走统一停止路径。
+- 远程开机不支持：关机状态下蓝牙模块已关闭。
+
+## 5. 重要宏定义
+
+以下宏位于 `inc/main.h`，修改前必须完成相应的示波器或台架验证。
+
+| 宏 | 当前值 | 作用与注意事项 |
+| --- | ---: | --- |
+| `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 允许 TIM6/DAC 治疗幅值链路；DAC=0 是否等于高压安全归零需实测。 |
+| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 允许 TIM1/TIM8 桥臂 PWM 输出；会实际驱动治疗桥臂。 |
+| `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 换向全关断死区，基于当前 128 MHz 时钟和定时器预分频 7；不可在未测关断时间前缩短。 |
+| `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | `1` 时强制两路 DAC 输出固定码值，仅限联调。 |
+| `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定 DAC 联调码值；受上限 3800 编译检查保护。 |
+| `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙 `POWER_LONG` 请求关机。 |
+| `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
+| `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |
+
+上述蓝牙宏只控制编译门禁，不取消运行时安全检查。治疗或压力输出前仍会检查充电状态、PB7 连接状态及当前应用状态。
+
+## 6. 修改与验证要求
+
+1. 修改治疗、DAC、PWM、定时器、GPIO、电源、压力或充电逻辑前，先核对原理图和 N32G455 数据手册。
+2. ISR 中只做确定性、短时操作；不得加入 `Delay`、阻塞 I/O、动态内存或轮询等待。
+3. `Pwr1/Pwr2` 被主循环和 ISR 共享，必须保持 `volatile`；新增多字节共享数据时需考虑原子性与临界区。
+4. 每次提交至少执行 `git diff --check` 和 Keil Rebuild；涉及输出控制还必须在目标板验证上电安全态、启停、模式切换、断链、充电互锁和异常关断。
+5. 编译通过不等于治疗输出、负载幅值、压力保护或电气安全已验证。
+
+详细实现请阅读：
+
+- `docs/状态机原理与业务实现.md`
+- `docs/蓝牙通讯协议V1.1.2.md`
+- `AGENTS.md`
