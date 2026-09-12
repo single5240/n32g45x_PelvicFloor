@@ -76,6 +76,7 @@ void TIM4_Configuration(void);
 void TIM8_Configuration(void);
 void TIM6_Configuration(void);
 void USART2_Configuration(void);
+uint8_t IWDG_Configuration(void);
 void NVIC_Configuration(void);
 void DAC_ChannelConfig(void);
 //void E1countExtiInit(void);

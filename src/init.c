@@ -35,6 +35,9 @@
 #include "init.h"
 #include "delay.h"
 
+#define IWDG_REGISTER_UPDATE_TIMEOUT 100000U
+#define IWDG_LSI_READY_TIMEOUT       100000U
+
 /** @addtogroup
  * @{
  */
@@ -680,6 +683,38 @@ void PBExtiInit(void)
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 }
+uint8_t IWDG_Configuration(void)
+{
+    uint32_t timeout = IWDG_LSI_READY_TIMEOUT;
+
+    RCC_EnableLsi(ENABLE);
+    while (RCC_GetFlagStatus(RCC_FLAG_LSIRD) == RESET)
+    {
+        if (--timeout == 0U)
+        {
+            return 0U;
+        }
+    }
+
+    IWDG_WriteConfig(IWDG_WRITE_ENABLE);
+    IWDG_SetPrescalerDiv(IWDG_PRESCALER_DIV32);
+    IWDG_CntReload(APP_IWDG_RELOAD_VALUE);
+
+    timeout = IWDG_REGISTER_UPDATE_TIMEOUT;
+    while ((IWDG_GetStatus(IWDG_PVU_FLAG) != RESET) ||
+           (IWDG_GetStatus(IWDG_CRVU_FLAG) != RESET))
+    {
+        if (--timeout == 0U)
+        {
+            return 0U;
+        }
+    }
+
+    IWDG_ReloadKey();
+    IWDG_Enable();
+    return 1U;
+}
+
 static uint8_t ADC_ModuleInitial(ADC_Module* ADCx)
 {
     ADC_InitType ADC_InitStructure;

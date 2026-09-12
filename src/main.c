@@ -216,6 +216,7 @@ typedef enum
 #define PRESSURE_DEFLATE_TIME_MS    3000U
 
 #define BLE_RX_BUFFER_SIZE          512U
+#define BLE_RX_PROCESS_BUDGET_BYTES 128U
 #define BLE_AT_LINE_SIZE            32U
 #define BLE_MAC_TEXT_LENGTH         12U
 #define BLE_NAME_PREFIX             "qw316_"
@@ -225,7 +226,6 @@ typedef enum
 #define BLE_AT_RESPONSE_TIMEOUT_MS  1000U
 #define BLE_RESET_DELAY_MS          100U
 #define BLE_AT_MAX_RETRY_COUNT      3U
-#define BLE_MONITOR_PERIOD_MS       30000U
 #define BLE_STA_STARTUP_CHECK_MS    1500U
 #define BLE_STA_DEBOUNCE_COUNT      10U
 
@@ -433,9 +433,7 @@ static uint8_t s_ble_remote_danger_active;
 static uint8_t s_ble_protocol_link_active;
 static BleStaContext_t s_ble_sta;
 static volatile BleCommCounters_t s_ble_comm_counters;
-static BleCommCounters_t s_ble_comm_previous;
-static BleProtocolStats_t s_ble_protocol_previous;
-static uint32_t s_ble_monitor_last_ms;
+static uint8_t s_iwdg_active;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
@@ -447,7 +445,7 @@ static void Treatment_StopOutputs(void);
 static void Pressure_StopOutputs(void);
 static void Pressure_ApplyOutputs(void);
 static void App_Init(void);
-static void App_RunOnce(void);
+static uint8_t App_RunOnce(void);
 static void App_RequestState(AppState_t next_state);
 static void App_ApplyStateTransition(void);
 static void App_StateEnter(AppState_t state);
@@ -516,13 +514,10 @@ static void BleProtocol_TxTask(void);
 static void BleProtocol_StopAll(void);
 static BleProtocolResult_t BleProtocol_UiAction(uint8_t action);
 static void BleProtocol_LinkState(uint8_t connected);
-static void BleProtocol_OnCommand(uint8_t command, const uint8_t *data,
-                                  uint8_t length, uint32_t now_ms);
 static void BleProtocol_RemoteDangerTimeout(void);
 static void BleProtocol_UpdateRemoteDanger(void);
 static void BleProtocol_GetStatus(uint32_t now_ms,
 	                              uint8_t status[BLE_PROTOCOL_STATUS_LENGTH]);
-static void BleComm_MonitorTask10ms(void);
 
 /* 后续蓝牙、ADC 和压力算法通过这些接口更新 UI，不直接操作段码�? */
 void AppUi_SetBleConnected(uint8_t connected);
@@ -548,6 +543,15 @@ static void Power_Task1000ms(void);
 void App_Tick1msISR(void)
 {
 	s_system_tick_ms++;
+}
+
+void App_FaultSafeShutdownISR(void)
+{
+	Treatment_StopOutputs();
+	TIM_SetCmp4(TIM4, 0U);
+	TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_DISABLE);
+	SWEN_OFF;
+	BLEEN_OFF;
 }
 
 void App_BleRxByteISR(uint8_t data)
@@ -653,6 +657,8 @@ static void Board_Init(void)
 		{
 		}
 	}
+	/* Do not preempt treatment ISRs; win arbitration when both are pending. */
+	NVIC_SetPriority(SysTick_IRQn, 0U);
 }
 
 /* 将当前能够直接控制的输出置于安全电平�? */
@@ -776,9 +782,8 @@ static void App_Init(void)
 	ble_callbacks.link_state = BleProtocol_LinkState;
 	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
 	ble_callbacks.get_status = BleProtocol_GetStatus;
-	ble_callbacks.on_command = BleProtocol_OnCommand;
+	ble_callbacks.on_command = 0;
 	BleProtocol_Init(&ble_callbacks);
-	s_ble_monitor_last_ms = s_system_tick_ms;
 
 	s_event_queue.read_index = 0U;
 	s_event_queue.write_index = 0U;
@@ -805,8 +810,10 @@ static void App_Init(void)
 }
 
 /* 主循环的一次调度：每个任务必须快速返回，禁止在任务内部长时间 Delay�? */
-static void App_RunOnce(void)
+static uint8_t App_RunOnce(void)
 {
+	uint8_t control_cycle_completed = 0U;
+
 	BleProtocol_TxTask();
 
 	if (Scheduler_IsDue(&s_scheduler.last_10ms, 10U))
@@ -818,6 +825,7 @@ static void App_RunOnce(void)
 		Control_Task10ms();
 		BleProtocol_UpdateRemoteDanger();
 		BleProtocol_CompleteUiAction(s_system_tick_ms);
+		control_cycle_completed = 1U;
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_50ms, 50U))
@@ -837,6 +845,7 @@ static void App_RunOnce(void)
 
 	/* 处理周期任务产生的状态切换请求�? */
 	App_ApplyStateTransition();
+	return control_cycle_completed;
 }
 
 static const char *App_StateName(AppState_t state)
@@ -2830,6 +2839,7 @@ static void BleName_ProcessLine(void)
 static void BleProtocol_RxTask10ms(void)
 {
 	uint8_t data;
+	uint16_t processed_bytes = 0U;
 
 	if (s_ble_rx_overflow != 0U)
 	{
@@ -2841,12 +2851,15 @@ static void BleProtocol_RxTask10ms(void)
 		return;
 	}
 
-	while (s_ble_rx_read_index != s_ble_rx_write_index)
+	/* Bound each pass so a continuous UART stream cannot monopolize the main loop. */
+	while ((processed_bytes < BLE_RX_PROCESS_BUDGET_BYTES) &&
+	       (s_ble_rx_read_index != s_ble_rx_write_index))
 	{
 		data = s_ble_rx_buffer[s_ble_rx_read_index];
 		s_ble_rx_read_index =
 			(uint16_t)((s_ble_rx_read_index + 1U) % BLE_RX_BUFFER_SIZE);
 		BleProtocol_InputByte(data, s_system_tick_ms);
+		processed_bytes++;
 	}
 	BleProtocol_Task(s_system_tick_ms);
 }
@@ -2941,18 +2954,6 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 static void BleProtocol_LinkState(uint8_t connected)
 {
 	s_ble_protocol_link_active = (connected != 0U) ? 1U : 0U;
-}
-
-/* 蓝牙通讯日志：每条收到的命令和 UI_ACTION 都带时间戳打印，便于联调定位。 */
-static void BleProtocol_OnCommand(uint8_t command, const uint8_t *data,
-                                  uint8_t length, uint32_t now_ms)
-{
-	LOG_I("t=%u BLE RX cmd=0x%02X len=%u", now_ms, command, length);
-	if ((command == BLE_COMMAND_UI_ACTION) && (length >= 1U) &&
-	    (data != 0))
-	{
-		LOG_I("t=%u BLE UI_ACTION action=%u", now_ms, data[0]);
-	}
 }
 
 static void BleProtocol_RemoteDangerTimeout(void)
@@ -3103,6 +3104,7 @@ static void BleSta_Task10ms(void)
 		else
 		{
 			s_ble_comm_counters.sta_disconnects++;
+			USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
 			BleProtocol_Reset();
 		}
 	}
@@ -3116,6 +3118,7 @@ static void BleSta_Task10ms(void)
 			s_ble_comm_counters.sta_link_mismatches++;
 			LOG_E("t=%u BLE STA low while protocol link is active", s_system_tick_ms);
 		}
+		USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
 		BleProtocol_Reset();
 	}
 }
@@ -3235,84 +3238,10 @@ static void BleName_Task10ms(void)
 	}
 }
 
-static void BleComm_MonitorTask10ms(void)
-{
-	BleCommCounters_t current;
-	BleProtocolStats_t protocol;
-	uint32_t now = s_system_tick_ms;
-
-	if ((uint32_t)(now - s_ble_monitor_last_ms) < BLE_MONITOR_PERIOD_MS)
-	{
-		return;
-	}
-	if ((uint32_t)(now - s_ble_monitor_last_ms) >
-	    (BLE_MONITOR_PERIOD_MS * 4U))
-	{
-		s_ble_monitor_last_ms = now;
-	}
-	else
-	{
-		s_ble_monitor_last_ms += BLE_MONITOR_PERIOD_MS;
-	}
-
-	current.rx_bytes = s_ble_comm_counters.rx_bytes;
-	current.tx_bytes = s_ble_comm_counters.tx_bytes;
-	current.rx_ring_overflows = s_ble_comm_counters.rx_ring_overflows;
-	current.usart_overruns = s_ble_comm_counters.usart_overruns;
-	current.usart_frame_errors = s_ble_comm_counters.usart_frame_errors;
-	current.usart_noise_errors = s_ble_comm_counters.usart_noise_errors;
-	current.usart_parity_errors = s_ble_comm_counters.usart_parity_errors;
-	current.at_retries = s_ble_comm_counters.at_retries;
-	current.at_fallbacks = s_ble_comm_counters.at_fallbacks;
-	current.at_failures = s_ble_comm_counters.at_failures;
-	current.sta_startup_failures = s_ble_comm_counters.sta_startup_failures;
-	current.sta_link_mismatches = s_ble_comm_counters.sta_link_mismatches;
-	current.sta_disconnects = s_ble_comm_counters.sta_disconnects;
-	BleProtocol_GetStats(&protocol);
-
-	LOG_I("t=%u BLE MON 30s IO rx_bytes=%u tx_bytes=%u valid_frames=%u tx_frames=%u",
-	      now,
-	      current.rx_bytes - s_ble_comm_previous.rx_bytes,
-	      current.tx_bytes - s_ble_comm_previous.tx_bytes,
-	      protocol.valid_frames - s_ble_protocol_previous.valid_frames,
-	      protocol.tx_frames - s_ble_protocol_previous.tx_frames);
-	LOG_I("t=%u BLE MON 30s FRAME sync=%u frame_len=%u cmd_len=%u version=%u crc=%u incomplete=%u unsupported=%u",
-	      now,
-	      protocol.sync_errors - s_ble_protocol_previous.sync_errors,
-	      protocol.length_errors - s_ble_protocol_previous.length_errors,
-	      protocol.command_length_errors -
-	      s_ble_protocol_previous.command_length_errors,
-	      protocol.version_errors - s_ble_protocol_previous.version_errors,
-	      protocol.crc_errors - s_ble_protocol_previous.crc_errors,
-	      protocol.frame_timeouts - s_ble_protocol_previous.frame_timeouts,
-	      protocol.unsupported_commands -
-	      s_ble_protocol_previous.unsupported_commands);
-	LOG_I("t=%u BLE MON 30s ERR rx_full=%u tx_drop=%u ore=%u fe=%u ne=%u pe=%u at_retry=%u at_fallback=%u at_failed=%u sta_boot=%u sta_mismatch=%u sta_disc=%u",
-	      now,
-	      current.rx_ring_overflows - s_ble_comm_previous.rx_ring_overflows,
-	      protocol.tx_dropped_frames - s_ble_protocol_previous.tx_dropped_frames,
-	      current.usart_overruns - s_ble_comm_previous.usart_overruns,
-	      current.usart_frame_errors - s_ble_comm_previous.usart_frame_errors,
-	      current.usart_noise_errors - s_ble_comm_previous.usart_noise_errors,
-	      current.usart_parity_errors - s_ble_comm_previous.usart_parity_errors,
-	      current.at_retries - s_ble_comm_previous.at_retries,
-	      current.at_fallbacks - s_ble_comm_previous.at_fallbacks,
-	      current.at_failures - s_ble_comm_previous.at_failures,
-	      current.sta_startup_failures -
-	      s_ble_comm_previous.sta_startup_failures,
-	      current.sta_link_mismatches -
-	      s_ble_comm_previous.sta_link_mismatches,
-	      current.sta_disconnects - s_ble_comm_previous.sta_disconnects);
-
-	s_ble_comm_previous = current;
-	s_ble_protocol_previous = protocol;
-}
-
 static void Communication_Task10ms(void)
 {
 	BleSta_Task10ms();
 	BleName_Task10ms();
-	BleComm_MonitorTask10ms();
 }
 
 static void AppEvent_Task10ms(void)
@@ -3459,13 +3388,53 @@ static void Power_Task1000ms(void)
 
 int main(void)
 {
+	uint8_t watchdog_reset;
+	uint8_t brownout_reset;
+	uint8_t power_on_reset;
+	uint8_t pin_reset;
+	uint8_t low_power_reset;
+	uint8_t control_cycle_completed;
+
+	watchdog_reset = (RCC_GetFlagStatus(RCC_FLAG_IWDGRST) != RESET) ? 1U : 0U;
+	brownout_reset = (RCC_GetFlagStatus(RCC_FLAG_BORRST) != RESET) ? 1U : 0U;
+	power_on_reset = (RCC_GetFlagStatus(RCC_FLAG_PORRST) != RESET) ? 1U : 0U;
+	pin_reset = (RCC_GetFlagStatus(RCC_FLAG_PINRST) != RESET) ? 1U : 0U;
+	low_power_reset = (RCC_GetFlagStatus(RCC_FLAG_LPWRRST) != RESET) ? 1U : 0U;
 	Board_Init();
 	App_Init();
+	LOG_I("t=%u reset flags iwdg=%u bor=%u por=%u pin=%u lpwr=%u",
+	      s_system_tick_ms, watchdog_reset, brownout_reset, power_on_reset,
+	      pin_reset, low_power_reset);
+	if (watchdog_reset != 0U)
+	{
+		LOG_W("t=%u reset cause=IWDG", s_system_tick_ms);
+	}
+	RCC_ClrFlag();
+
+#if (APP_IWDG_ENABLE != 0U)
+	s_iwdg_active = IWDG_Configuration();
+	if (s_iwdg_active != 0U)
+	{
+		LOG_I("t=%u IWDG enabled, nominal timeout=2000 ms", s_system_tick_ms);
+	}
+	else
+	{
+		LOG_E("t=%u IWDG initialization failed", s_system_tick_ms);
+		App_RequestState(APP_STATE_FAULT);
+		App_ApplyStateTransition();
+	}
+#endif
 	LOG_I("t=%u main loop started", s_system_tick_ms);
 
 	while (1)
 	{
-		App_RunOnce();
+		control_cycle_completed = App_RunOnce();
+		if ((s_iwdg_active != 0U) &&
+		    (control_cycle_completed != 0U))
+		{
+			/* Feed only after the complete 10 ms control chain has returned. */
+			IWDG_ReloadKey();
+		}
 
 		/* 等待下一次中断，避免空转占满 CPU */
 		__WFI();

@@ -432,6 +432,11 @@
               <FilePath>..\firmware\n32g45x_std_periph_driver\src\n32g45x_gpio.c</FilePath>
             </File>
             <File>
+              <FileName>n32g45x_iwdg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\firmware\n32g45x_std_periph_driver\src\n32g45x_iwdg.c</FilePath>
+            </File>
+            <File>
               <FileName>n32g45x_pwr.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\firmware\n32g45x_std_periph_driver\src\n32g45x_pwr.c</FilePath>

@@ -185,6 +185,10 @@ extern "C" {
 #define BLE_REMOTE_TREATMENT_CONTROL_ENABLE 1U
 #define BLE_REMOTE_PRESSURE_CONTROL_ENABLE  1U
 
+/* With the nominal 40 kHz LSI and /32 prescaler, 2499 gives about 2 s. */
+#define APP_IWDG_ENABLE                       1U
+#define APP_IWDG_RELOAD_VALUE                 2499U
+
 #define APP_BLE_USART_ERROR_OVERRUN          0x01U
 #define APP_BLE_USART_ERROR_FRAME            0x02U
 #define APP_BLE_USART_ERROR_NOISE            0x04U
@@ -196,8 +200,17 @@ extern "C" {
 #error "BLE remote control gates must be 0 or 1"
 #endif
 
+#if (APP_IWDG_ENABLE > 1U)
+#error "APP_IWDG_ENABLE must be 0 or 1"
+#endif
+
+#if (APP_IWDG_RELOAD_VALUE > 0x0FFFU)
+#error "APP_IWDG_RELOAD_VALUE must fit the 12-bit IWDG reload register"
+#endif
+
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
+void App_FaultSafeShutdownISR(void);
 void App_BleRxByteISR(uint8_t data);
 void App_BleTxReadyISR(void);
 void App_BleUsartErrorISR(uint8_t error_flags);

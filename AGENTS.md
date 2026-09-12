@@ -5,7 +5,7 @@
 - 目标芯片：Nations N32G455CCL7（Cortex-M4）。
 - 主工程：`MDK-ARM/Main.uvprojx`；默认 target 为 `N32G45x`，使用 Keil MDK-ARM 的 ARM Compiler 5，当前验证环境为 V5.06 update 6。工程元数据中的 `CLOCK` 为 12 MHz，但当前实际运行时钟为内部 8 MHz HSI 经 PLL 得到的 128 MHz。
 - 同时保留 IAR 工程：`EWARM/ADC_SingleRead.ewp`。除非任务明确要求，不修改工程工具链、芯片型号或链接配置。
-- 这是裸机协作式固件：SysTick 只递增 1 ms 时基；主循环在 `src/main.c` 中调度 10 ms、50 ms、100 ms 和 1000 ms 任务，并在空闲时执行 `__WFI()`。
+- 这是裸机协作式固件：SysTick 只递增 1 ms 时基；主循环在 `src/main.c` 中调度 10 ms、50 ms、100 ms 和 1000 ms 任务，完整执行一轮后喂独立看门狗，并在空闲时执行 `__WFI()`。
 
 ## 目录与职责
 
@@ -131,6 +131,8 @@
 | `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许远程关机事件。 |
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许远程治疗危险事件进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许远程压力危险事件进入状态机。 |
+| `APP_IWDG_ENABLE` | `1` | 启用独立看门狗；仅在主循环完整返回后喂狗。 |
+| `APP_IWDG_RELOAD_VALUE` | `2499` | LSI 40 kHz、32 分频时标称超时约 2 s。 |
 
 蓝牙编译开关置 1 不会取消运行时门禁：危险动作仍必须通过应用状态、充电互锁和 PB7 物理连接检查，并通过现有事件队列执行。远程开机不支持，因为关机状态会关闭蓝牙模块。
 
