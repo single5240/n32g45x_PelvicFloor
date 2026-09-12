@@ -50,6 +50,11 @@ extern uint8_t Formula;	 /////处方0，1,2
 extern uint8_t WorkType; ////0:治疗模式，1：检测模式
 extern volatile uint8_t Pwr1;	 /////0-60档强度
 extern volatile uint8_t Pwr2;
+extern volatile uint32_t g_diag_tim1_update_count;
+extern volatile uint32_t g_diag_tim8_update_count;
+extern volatile uint32_t g_diag_tim1_cc_count;
+extern volatile uint32_t g_diag_tim8_cc_count;
+extern volatile uint32_t g_diag_usart2_irq_count;
 
 extern uint8_t Flash_Flag;
 
@@ -142,53 +147,95 @@ void NMI_Handler(void)
 {
 }
 
+void App_FaultHandlerC(uint32_t *stack_frame,
+	                   uint32_t exc_return,
+	                   uint32_t fault_type)
+{
+	App_DiagnosticsRecordFaultContextISR((uint16_t)fault_type,
+	                                     stack_frame,
+	                                     exc_return);
+	App_FaultSafeShutdownISR();
+	while (1)
+	{
+	}
+}
+
+#if defined(__CC_ARM)
+
+__asm void HardFault_Handler(void)
+	{
+		IMPORT App_FaultHandlerC
+		TST LR, #4
+		ITE EQ
+		MRSEQ R0, MSP
+		MRSNE R0, PSP
+		MOV R1, LR
+		MOVS R2, #1
+		B App_FaultHandlerC
+	}
+
+__asm void MemManage_Handler(void)
+	{
+		IMPORT App_FaultHandlerC
+		TST LR, #4
+		ITE EQ
+		MRSEQ R0, MSP
+		MRSNE R0, PSP
+		MOV R1, LR
+		MOVS R2, #2
+		B App_FaultHandlerC
+	}
+
+__asm void BusFault_Handler(void)
+	{
+		IMPORT App_FaultHandlerC
+		TST LR, #4
+		ITE EQ
+		MRSEQ R0, MSP
+		MRSNE R0, PSP
+		MOV R1, LR
+		MOVS R2, #3
+		B App_FaultHandlerC
+	}
+
+__asm void UsageFault_Handler(void)
+	{
+		IMPORT App_FaultHandlerC
+		TST LR, #4
+		ITE EQ
+		MRSEQ R0, MSP
+		MRSNE R0, PSP
+		MOV R1, LR
+		MOVS R2, #4
+		B App_FaultHandlerC
+	}
+
+#else
+
 /**
- * @brief  This function handles Hard Fault exception.
+ * @brief  Fault handlers without an ARM Compiler 5 assembly wrapper.
  */
 void HardFault_Handler(void)
 {
-	App_FaultSafeShutdownISR();
-	/* Go to infinite loop when Hard Fault exception occurs */
-	while (1)
-	{
-	}
+	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_HARDFAULT);
 }
 
-/**
- * @brief  This function handles Memory Manage exception.
- */
 void MemManage_Handler(void)
 {
-	App_FaultSafeShutdownISR();
-	/* Go to infinite loop when Memory Manage exception occurs */
-	while (1)
-	{
-	}
+	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_MEMMANAGE);
 }
 
-/**
- * @brief  This function handles Bus Fault exception.
- */
 void BusFault_Handler(void)
 {
-	App_FaultSafeShutdownISR();
-	/* Go to infinite loop when Bus Fault exception occurs */
-	while (1)
-	{
-	}
+	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_BUSFAULT);
 }
 
-/**
- * @brief  This function handles Usage Fault exception.
- */
 void UsageFault_Handler(void)
 {
-	App_FaultSafeShutdownISR();
-	/* Go to infinite loop when Usage Fault exception occurs */
-	while (1)
-	{
-	}
+	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_USAGEFAULT);
 }
+
+#endif
 
 /**
  * @brief  This function handles SVCall exception.
@@ -211,6 +258,8 @@ void SysTick_Handler(void)
 {
 	extern void App_Tick1msISR(void);
 	App_Tick1msISR();
+	/* Cortex-M4 erratum 838869 workaround before exception return. */
+	__DSB();
 }
 
 /******************************************************************************/
@@ -230,6 +279,8 @@ void USART2_IRQHandler(void)
 {
     uint16_t status = USART2->STS;
     uint8_t error_flags = 0U;
+
+    g_diag_usart2_irq_count++;
 
     if ((status & USART_FLAG_OREF) != 0U)
     {
@@ -264,6 +315,8 @@ void USART2_IRQHandler(void)
     {
         App_BleTxReadyISR();
     }
+    /* Complete peripheral/SRAM stores before exception return. */
+    __DSB();
 }
 /**
  * @brief  This function handles USARTy global interrupt request.
@@ -324,6 +377,7 @@ void TIM1_CC_IRQHandler(void)
 	{
 		uint8_t leg = s_treatment_ch1_pending_leg;
 
+		g_diag_tim1_cc_count++;
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
 		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
 		if ((Pwr1 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
@@ -331,6 +385,8 @@ void TIM1_CC_IRQHandler(void)
 			TreatmentPulse_SelectCh1Leg(leg);
 		}
 	}
+	/* Cortex-M4 erratum 838869 workaround before exception return. */
+	__DSB();
 }
 
 void TIM8_CC_IRQHandler(void)
@@ -339,6 +395,7 @@ void TIM8_CC_IRQHandler(void)
 	{
 		uint8_t leg = s_treatment_ch2_pending_leg;
 
+		g_diag_tim8_cc_count++;
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
 		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
 		if ((Pwr2 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
@@ -346,6 +403,8 @@ void TIM8_CC_IRQHandler(void)
 			TreatmentPulse_SelectCh2Leg(leg);
 		}
 	}
+	/* Cortex-M4 erratum 838869 workaround before exception return. */
+	__DSB();
 }
 
 static uint8_t TreatmentPulse_NormalizeMode(uint8_t mode)
@@ -416,10 +475,68 @@ void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode)
 	__set_PRIMASK(primask);
 }
 
+void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
+{
+	uint32_t primask = __get_PRIMASK();
+	TIM_Module *timer;
+	IRQn_Type update_irq;
+	IRQn_Type compare_irq;
+
+	if (channel == TREATMENT_CHANNEL_1)
+	{
+		timer = TIM1;
+		update_irq = TIM1_UP_IRQn;
+		compare_irq = TIM1_CC_IRQn;
+	}
+	else if (channel == TREATMENT_CHANNEL_2)
+	{
+		timer = TIM8;
+		update_irq = TIM8_UP_IRQn;
+		compare_irq = TIM8_CC_IRQn;
+	}
+	else
+	{
+		return;
+	}
+
+	__disable_irq();
+	if (channel == TREATMENT_CHANNEL_1)
+	{
+		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
+		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
+	}
+	else
+	{
+		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
+		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
+	}
+
+	TIM_Enable(timer, DISABLE);
+	TIM_ConfigInt(timer, TIM_INT_UPDATE | TIM_INT_CC3, DISABLE);
+	TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3);
+	NVIC_ClearPendingIRQ(update_irq);
+	NVIC_ClearPendingIRQ(compare_irq);
+
+	if (enabled != 0U)
+	{
+		TIM_SetCnt(timer, TREATMENT_TIMER_RELOAD_VALUE);
+		TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3);
+		NVIC_ClearPendingIRQ(update_irq);
+		NVIC_ClearPendingIRQ(compare_irq);
+		TIM_ConfigInt(timer, TIM_INT_UPDATE, ENABLE);
+#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
+		TIM_ConfigInt(timer, TIM_INT_CC3, ENABLE);
+#endif
+		TIM_Enable(timer, ENABLE);
+	}
+	__set_PRIMASK(primask);
+}
+
 void TIM1_UP_IRQHandler(void)
 {
 	if (TIM_GetIntStatus(TIM1, TIM_INT_UPDATE) != RESET)
 	{
+		g_diag_tim1_update_count++;
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
 		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
 		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
@@ -753,12 +870,15 @@ void TIM1_UP_IRQHandler(void)
 			Tim1_Count = 0U;
 		}
 	}
+	/* Cortex-M4 erratum 838869 workaround before exception return. */
+	__DSB();
 }
 
 void TIM8_UP_IRQHandler(void)
 {
 	if (TIM_GetIntStatus(TIM8, TIM_INT_UPDATE) != RESET)
 	{
+		g_diag_tim8_update_count++;
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
 		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
 		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
@@ -1092,6 +1212,8 @@ void TIM8_UP_IRQHandler(void)
 			Tim8_Count = 0U;
 		}
 	}
+	/* Cortex-M4 erratum 838869 workaround before exception return. */
+	__DSB();
 }
 
 /**

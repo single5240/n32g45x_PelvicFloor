@@ -74,6 +74,11 @@ uint8_t Formula = 0;  ////处方0,1,2�?
 uint8_t Ico_Formula = 0;
 volatile uint8_t Pwr1 = 0; /////0-60档强�?
 volatile uint8_t Pwr2 = 0;
+volatile uint32_t g_diag_tim1_update_count;
+volatile uint32_t g_diag_tim8_update_count;
+volatile uint32_t g_diag_tim1_cc_count;
+volatile uint32_t g_diag_tim8_cc_count;
+volatile uint32_t g_diag_usart2_irq_count;
 uint16_t Press_Value = 0; /// 压力�?
 uint16_t Buzz_cnt = 0;	  /// 蜂鸣器时�?
 uint8_t Flash_Flag = 0;	  ////闪烁标志�?
@@ -107,6 +112,7 @@ void assert_failed(const uint8_t *expr, const uint8_t *file, uint32_t line)
 	/* User can add his own implementation to report the file name and line number,
 	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
 
+	App_DiagnosticsRecordFaultISR(APP_DIAG_FAULT_ASSERT);
 	/* Infinite loop */
 	while (1)
 	{
@@ -149,6 +155,59 @@ typedef enum
 	APP_EVENT_CHARGER_CONNECTED,
 	APP_EVENT_CHARGER_DISCONNECTED
 } AppEvent_t;
+
+#define APP_DIAG_MAGIC                    0xD316U
+#define APP_DIAG_VERSION                  0x0002U
+#define APP_DIAG_SNAPSHOT_PERIOD_MS       100U
+#define APP_DIAG_SRAM_START               0x20000000UL
+#define APP_DIAG_SRAM_END                 0x20024000UL
+#define APP_DIAG_BASIC_FRAME_WORDS        8U
+#define APP_DIAG_FP_FRAME_PREFIX_WORDS    18U
+#define APP_DIAG_STAGE_BOOT               0x0001U
+#define APP_DIAG_STAGE_TX                 0x0010U
+#define APP_DIAG_STAGE_INPUT_10MS         0x0020U
+#define APP_DIAG_STAGE_COMM_10MS          0x0021U
+#define APP_DIAG_STAGE_EVENT_10MS         0x0022U
+#define APP_DIAG_STAGE_STATE_10MS         0x0023U
+#define APP_DIAG_STAGE_CONTROL_10MS       0x0024U
+#define APP_DIAG_STAGE_REMOTE_10MS        0x0025U
+#define APP_DIAG_STAGE_RESPONSE_10MS      0x0026U
+#define APP_DIAG_STAGE_UI_50MS            0x0030U
+#define APP_DIAG_STAGE_SENSOR_100MS       0x0040U
+#define APP_DIAG_STAGE_POWER_1000MS       0x0050U
+#define APP_DIAG_STAGE_RUN_COMPLETE       0x0060U
+#define APP_DIAG_STAGE_WATCHDOG_FEED      0x0070U
+#define APP_DIAG_STAGE_WFI                0x0071U
+#define APP_DIAG_STAGE_FAULT              0x00F0U
+
+typedef struct
+{
+	uint8_t valid;
+	uint16_t stage;
+	uint16_t event;
+	uint32_t tick_ms;
+	uint16_t levels;
+	uint16_t fault_type;
+	uint32_t cfsr;
+	uint32_t hfsr;
+	uint32_t mmfar;
+	uint32_t bfar;
+	uint32_t stacked_pc;
+	uint32_t stacked_lr;
+	uint32_t stacked_xpsr;
+	uint32_t exc_return;
+	uint32_t tim1_update_count;
+	uint32_t tim8_update_count;
+	uint32_t tim1_cc_count;
+	uint32_t tim8_cc_count;
+	uint32_t usart2_irq_count;
+	uint32_t rx_bytes;
+	uint16_t rx_ring_overflows;
+	uint16_t usart_overruns;
+	uint16_t usart_frame_errors;
+	uint16_t usart_noise_errors;
+	uint16_t usart_parity_errors;
+} AppDiagSnapshot_t;
 
 #define APP_STATE_MASK(state)             ((uint8_t)(1U << (uint8_t)(state)))
 #define BLE_ACTION_FLAG_POWER_OFF_LOCK    0x01U
@@ -434,12 +493,16 @@ static uint8_t s_ble_protocol_link_active;
 static BleStaContext_t s_ble_sta;
 static volatile BleCommCounters_t s_ble_comm_counters;
 static uint8_t s_iwdg_active;
+static AppDiagSnapshot_t s_diag_previous;
+static uint8_t s_diag_tick_divider;
+static uint8_t s_core_838869_workaround_active;
 
 static uint8_t s_charger_raw;
 static uint8_t s_charger_stable;
 static uint8_t s_charger_debounce_count;
 
 static void Board_Init(void);
+static void Core_ApplyErrataWorkarounds(void);
 static void Board_EnterSafeState(void);
 static void Treatment_StopOutputs(void);
 static void Pressure_StopOutputs(void);
@@ -535,6 +598,227 @@ static void Control_Task10ms(void);
 static void Ui_Task50ms(void);
 static void Sensor_Task100ms(void);
 static void Power_Task1000ms(void);
+static void AppDiagnostics_Init(void);
+static void AppDiagnostics_LogPrevious(uint8_t watchdog_reset);
+static void AppDiagnostics_SetStage(uint16_t stage);
+static void AppDiagnostics_RecordEvent(AppEvent_t event);
+static void AppDiagnostics_SnapshotRuntime(void);
+static const char *AppDiagnostics_StageName(uint16_t stage);
+
+static uint32_t AppDiagnostics_Read32(__IO uint16_t *low,
+                                      __IO uint16_t *high)
+{
+	return (uint32_t)(*low) | ((uint32_t)(*high) << 16U);
+}
+
+static void AppDiagnostics_Write32(__IO uint16_t *low,
+                                   __IO uint16_t *high,
+                                   uint32_t value)
+{
+	*low = (uint16_t)value;
+	*high = (uint16_t)(value >> 16U);
+}
+
+static void AppDiagnostics_Init(void)
+{
+	s_diag_previous.valid = ((BKP->DAT1 == APP_DIAG_MAGIC) &&
+	                         (BKP->DAT2 == APP_DIAG_VERSION)) ? 1U : 0U;
+	if (s_diag_previous.valid != 0U)
+	{
+		s_diag_previous.stage = BKP->DAT3;
+		s_diag_previous.event = BKP->DAT4;
+		s_diag_previous.tick_ms = AppDiagnostics_Read32(&BKP->DAT5, &BKP->DAT6);
+		s_diag_previous.levels = BKP->DAT7;
+		s_diag_previous.fault_type = BKP->DAT8;
+		s_diag_previous.cfsr = AppDiagnostics_Read32(&BKP->DAT9, &BKP->DAT10);
+		s_diag_previous.hfsr = AppDiagnostics_Read32(&BKP->DAT11, &BKP->DAT12);
+		s_diag_previous.tim1_update_count = AppDiagnostics_Read32(&BKP->DAT13,
+		                                                       &BKP->DAT14);
+		s_diag_previous.tim8_update_count = AppDiagnostics_Read32(&BKP->DAT15,
+		                                                       &BKP->DAT16);
+		s_diag_previous.tim1_cc_count = AppDiagnostics_Read32(&BKP->DAT17,
+		                                                   &BKP->DAT18);
+		s_diag_previous.tim8_cc_count = AppDiagnostics_Read32(&BKP->DAT19,
+		                                                   &BKP->DAT20);
+		s_diag_previous.usart2_irq_count = AppDiagnostics_Read32(&BKP->DAT21,
+		                                                      &BKP->DAT22);
+		s_diag_previous.rx_bytes = AppDiagnostics_Read32(&BKP->DAT23, &BKP->DAT24);
+		s_diag_previous.rx_ring_overflows = BKP->DAT25;
+		s_diag_previous.usart_overruns = BKP->DAT26;
+		s_diag_previous.usart_frame_errors = BKP->DAT27;
+		s_diag_previous.usart_noise_errors = BKP->DAT28;
+		s_diag_previous.usart_parity_errors = BKP->DAT29;
+		s_diag_previous.mmfar = AppDiagnostics_Read32(&BKP->DAT30, &BKP->DAT31);
+		s_diag_previous.bfar = AppDiagnostics_Read32(&BKP->DAT32, &BKP->DAT33);
+		s_diag_previous.stacked_pc = AppDiagnostics_Read32(&BKP->DAT34,
+		                                                   &BKP->DAT35);
+		s_diag_previous.stacked_lr = AppDiagnostics_Read32(&BKP->DAT36,
+		                                                   &BKP->DAT37);
+		s_diag_previous.stacked_xpsr = AppDiagnostics_Read32(&BKP->DAT38,
+		                                                     &BKP->DAT39);
+		s_diag_previous.exc_return = AppDiagnostics_Read32(&BKP->DAT40,
+		                                                   &BKP->DAT41);
+	}
+
+	/* Publish the magic last so an interrupted initialization is rejected. */
+	BKP->DAT1 = 0U;
+	BKP->DAT2 = APP_DIAG_VERSION;
+	BKP->DAT3 = APP_DIAG_STAGE_BOOT;
+	BKP->DAT4 = APP_EVENT_NONE;
+	BKP->DAT7 = 0U;
+	BKP->DAT8 = 0U;
+	AppDiagnostics_Write32(&BKP->DAT9, &BKP->DAT10, 0U);
+	AppDiagnostics_Write32(&BKP->DAT11, &BKP->DAT12, 0U);
+	AppDiagnostics_Write32(&BKP->DAT30, &BKP->DAT31, 0U);
+	AppDiagnostics_Write32(&BKP->DAT32, &BKP->DAT33, 0U);
+	AppDiagnostics_Write32(&BKP->DAT34, &BKP->DAT35, 0U);
+	AppDiagnostics_Write32(&BKP->DAT36, &BKP->DAT37, 0U);
+	AppDiagnostics_Write32(&BKP->DAT38, &BKP->DAT39, 0U);
+	AppDiagnostics_Write32(&BKP->DAT40, &BKP->DAT41, 0U);
+	AppDiagnostics_SnapshotRuntime();
+	BKP->DAT1 = APP_DIAG_MAGIC;
+}
+
+static void AppDiagnostics_LogPrevious(uint8_t watchdog_reset)
+{
+	if ((watchdog_reset == 0U) || (s_diag_previous.valid == 0U))
+	{
+		return;
+	}
+
+	LOG_W("diag prev stage=0x%02x(%s) event=%u tick=%u level=%u/%u fault=%u cfsr=0x%08x hfsr=0x%08x mmfar=0x%08x bfar=0x%08x",
+	      s_diag_previous.stage,
+	      AppDiagnostics_StageName(s_diag_previous.stage),
+	      s_diag_previous.event, s_diag_previous.tick_ms,
+	      (uint8_t)(s_diag_previous.levels & 0xFFU),
+	      (uint8_t)(s_diag_previous.levels >> 8U),
+	      s_diag_previous.fault_type, s_diag_previous.cfsr,
+	      s_diag_previous.hfsr, s_diag_previous.mmfar,
+	      s_diag_previous.bfar);
+	LOG_W("diag irq tim1_up=%u tim8_up=%u tim1_cc=%u tim8_cc=%u usart2=%u rx=%u err ring=%u ore=%u fe=%u ne=%u pe=%u",
+	      s_diag_previous.tim1_update_count,
+	      s_diag_previous.tim8_update_count,
+	      s_diag_previous.tim1_cc_count,
+	      s_diag_previous.tim8_cc_count,
+	      s_diag_previous.usart2_irq_count,
+	      s_diag_previous.rx_bytes,
+	      s_diag_previous.rx_ring_overflows,
+	      s_diag_previous.usart_overruns,
+	      s_diag_previous.usart_frame_errors,
+	      s_diag_previous.usart_noise_errors,
+	      s_diag_previous.usart_parity_errors);
+	if (s_diag_previous.fault_type != 0U)
+	{
+		LOG_W("diag fault pc=0x%08x lr=0x%08x xpsr=0x%08x ipsr=%u exc_return=0x%08x",
+		      s_diag_previous.stacked_pc,
+		      s_diag_previous.stacked_lr,
+		      s_diag_previous.stacked_xpsr,
+		      (uint16_t)(s_diag_previous.stacked_xpsr & 0x1FFU),
+		      s_diag_previous.exc_return);
+	}
+}
+
+static void AppDiagnostics_SetStage(uint16_t stage)
+{
+	AppDiagnostics_Write32(&BKP->DAT5, &BKP->DAT6, s_system_tick_ms);
+	__DMB();
+	BKP->DAT3 = stage;
+}
+
+static void AppDiagnostics_RecordEvent(AppEvent_t event)
+{
+	BKP->DAT4 = (uint16_t)event;
+}
+
+static void AppDiagnostics_SnapshotRuntime(void)
+{
+	BKP->DAT7 = (uint16_t)Pwr1 | ((uint16_t)Pwr2 << 8U);
+	AppDiagnostics_Write32(&BKP->DAT5, &BKP->DAT6, s_system_tick_ms);
+	AppDiagnostics_Write32(&BKP->DAT13, &BKP->DAT14,
+	                       g_diag_tim1_update_count);
+	AppDiagnostics_Write32(&BKP->DAT15, &BKP->DAT16,
+	                       g_diag_tim8_update_count);
+	AppDiagnostics_Write32(&BKP->DAT17, &BKP->DAT18, g_diag_tim1_cc_count);
+	AppDiagnostics_Write32(&BKP->DAT19, &BKP->DAT20, g_diag_tim8_cc_count);
+	AppDiagnostics_Write32(&BKP->DAT21, &BKP->DAT22,
+	                       g_diag_usart2_irq_count);
+	AppDiagnostics_Write32(&BKP->DAT23, &BKP->DAT24,
+	                       s_ble_comm_counters.rx_bytes);
+	BKP->DAT25 = (uint16_t)s_ble_comm_counters.rx_ring_overflows;
+	BKP->DAT26 = (uint16_t)s_ble_comm_counters.usart_overruns;
+	BKP->DAT27 = (uint16_t)s_ble_comm_counters.usart_frame_errors;
+	BKP->DAT28 = (uint16_t)s_ble_comm_counters.usart_noise_errors;
+	BKP->DAT29 = (uint16_t)s_ble_comm_counters.usart_parity_errors;
+}
+
+void App_DiagnosticsRecordFaultISR(uint16_t fault_type)
+{
+	App_DiagnosticsRecordFaultContextISR(fault_type, 0, 0U);
+}
+
+void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
+	                                      const uint32_t *stack_frame,
+	                                      uint32_t exc_return)
+{
+	uint32_t frame_address = (uint32_t)stack_frame;
+	const uint32_t *core_frame = stack_frame;
+
+	AppDiagnostics_SnapshotRuntime();
+	BKP->DAT8 = fault_type;
+	AppDiagnostics_Write32(&BKP->DAT9, &BKP->DAT10, SCB->CFSR);
+	AppDiagnostics_Write32(&BKP->DAT11, &BKP->DAT12, SCB->HFSR);
+	AppDiagnostics_Write32(&BKP->DAT30, &BKP->DAT31, SCB->MMFAR);
+	AppDiagnostics_Write32(&BKP->DAT32, &BKP->DAT33, SCB->BFAR);
+
+	/* EXC_RETURN bit 4 is clear when an extended floating-point frame exists. */
+	if ((stack_frame != 0) && ((exc_return & (1UL << 4U)) == 0U))
+	{
+		frame_address += APP_DIAG_FP_FRAME_PREFIX_WORDS * sizeof(uint32_t);
+		core_frame = (const uint32_t *)frame_address;
+	}
+	if ((core_frame != 0) && ((frame_address & 0x3U) == 0U) &&
+	    (frame_address >= APP_DIAG_SRAM_START) &&
+	    (frame_address <= (APP_DIAG_SRAM_END -
+	                       APP_DIAG_BASIC_FRAME_WORDS * sizeof(uint32_t))))
+	{
+		AppDiagnostics_Write32(&BKP->DAT34, &BKP->DAT35, core_frame[6]);
+		AppDiagnostics_Write32(&BKP->DAT36, &BKP->DAT37, core_frame[5]);
+		AppDiagnostics_Write32(&BKP->DAT38, &BKP->DAT39, core_frame[7]);
+	}
+	else
+	{
+		AppDiagnostics_Write32(&BKP->DAT34, &BKP->DAT35, 0U);
+		AppDiagnostics_Write32(&BKP->DAT36, &BKP->DAT37, 0U);
+		AppDiagnostics_Write32(&BKP->DAT38, &BKP->DAT39, 0U);
+	}
+	AppDiagnostics_Write32(&BKP->DAT40, &BKP->DAT41, exc_return);
+	__DMB();
+	BKP->DAT3 = APP_DIAG_STAGE_FAULT;
+}
+
+static const char *AppDiagnostics_StageName(uint16_t stage)
+{
+	switch (stage)
+	{
+		case APP_DIAG_STAGE_BOOT:          return "BOOT";
+		case APP_DIAG_STAGE_TX:            return "TX";
+		case APP_DIAG_STAGE_INPUT_10MS:    return "INPUT";
+		case APP_DIAG_STAGE_COMM_10MS:     return "COMM";
+		case APP_DIAG_STAGE_EVENT_10MS:    return "EVENT";
+		case APP_DIAG_STAGE_STATE_10MS:    return "STATE";
+		case APP_DIAG_STAGE_CONTROL_10MS:  return "CONTROL";
+		case APP_DIAG_STAGE_REMOTE_10MS:   return "REMOTE";
+		case APP_DIAG_STAGE_RESPONSE_10MS: return "RESPONSE";
+		case APP_DIAG_STAGE_UI_50MS:       return "UI";
+		case APP_DIAG_STAGE_SENSOR_100MS:  return "SENSOR";
+		case APP_DIAG_STAGE_POWER_1000MS:  return "POWER";
+		case APP_DIAG_STAGE_RUN_COMPLETE:  return "COMPLETE";
+		case APP_DIAG_STAGE_WATCHDOG_FEED: return "IWDG_FEED";
+		case APP_DIAG_STAGE_WFI:           return "WFI";
+		case APP_DIAG_STAGE_FAULT:         return "FAULT";
+		default:                           return "UNKNOWN";
+	}
+}
 
 /*
  * 1 ms 系统节拍入口�?
@@ -543,6 +827,12 @@ static void Power_Task1000ms(void);
 void App_Tick1msISR(void)
 {
 	s_system_tick_ms++;
+	s_diag_tick_divider++;
+	if (s_diag_tick_divider >= APP_DIAG_SNAPSHOT_PERIOD_MS)
+	{
+		s_diag_tick_divider = 0U;
+		AppDiagnostics_SnapshotRuntime();
+	}
 }
 
 void App_FaultSafeShutdownISR(void)
@@ -625,8 +915,38 @@ void App_BleUsartErrorISR(uint8_t error_flags)
 }
 
 /* 板级基础初始化：这里只初始化所有状态都会使用的资源�? */
+static void Core_ApplyErrataWorkarounds(void)
+{
+#if (APP_CORTEX_M4_838869_WORKAROUND_ENABLE != 0U)
+	uint32_t cpuid = SCB->CPUID;
+	uint32_t implementer = (cpuid & SCB_CPUID_IMPLEMENTER_Msk) >>
+	                       SCB_CPUID_IMPLEMENTER_Pos;
+	uint32_t variant = (cpuid & SCB_CPUID_VARIANT_Msk) >>
+	                   SCB_CPUID_VARIANT_Pos;
+	uint32_t part_number = (cpuid & SCB_CPUID_PARTNO_Msk) >>
+	                       SCB_CPUID_PARTNO_Pos;
+	uint32_t revision = (cpuid & SCB_CPUID_REVISION_Msk) >>
+	                    SCB_CPUID_REVISION_Pos;
+
+	/* ARM erratum 838869 affects Cortex-M4 r0p0/r0p1. The ACTLR
+	 * workaround is valid while the MPU is disabled, as in this firmware. */
+	if ((implementer == 0x41U) &&
+	    (part_number == 0xC24U) &&
+	    (variant == 0U) &&
+	    (revision <= 1U) &&
+	    ((MPU->CTRL & MPU_CTRL_ENABLE_Msk) == 0U))
+	{
+		SCnSCB->ACTLR |= SCnSCB_ACTLR_DISDEFWBUF_Msk;
+		__DSB();
+		__ISB();
+		s_core_838869_workaround_active = 1U;
+	}
+#endif
+}
+
 static void Board_Init(void)
 {
+	Core_ApplyErrataWorkarounds();
 	RCC_Configuration();
 	GPIO_Configuration();
 	SystemCoreClockUpdate();
@@ -643,7 +963,9 @@ static void Board_Init(void)
 	USART2_Configuration();
 	NVIC_Configuration();
 	SEGGER_RTT_Init();
-	LOG_I("t=%u system init, core=%u Hz", s_system_tick_ms, SystemCoreClock);
+	LOG_I("t=%u system init, core=%u Hz cpuid=0x%08x actlr=0x%08x err838869=%u",
+	      s_system_tick_ms, SystemCoreClock, SCB->CPUID, SCnSCB->ACTLR,
+	      s_core_838869_workaround_active);
 
 	/* GPIO 初始化完成后，第一时间把执行器置于安全状态�? */
 	Board_EnterSafeState();
@@ -687,6 +1009,8 @@ static void Treatment_StopOutputs(void)
 	Pwr2 = 0U;
 	Tim1_Count = 0U;
 	Tim8_Count = 0U;
+	TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 0U);
+	TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 0U);
 
 	/* Keep the initial pulse scheme's compare value ready for the next treatment. */
 	TIM_SetCmp1(TIM1, 7800U);
@@ -818,29 +1142,43 @@ static uint8_t App_RunOnce(void)
 
 	if (Scheduler_IsDue(&s_scheduler.last_10ms, 10U))
 	{
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_INPUT_10MS);
 		Input_Task10ms();
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_COMM_10MS);
 		Communication_Task10ms();
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_EVENT_10MS);
 		AppEvent_Task10ms();
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_STATE_10MS);
 		App_ApplyStateTransition();
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_CONTROL_10MS);
 		Control_Task10ms();
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_REMOTE_10MS);
 		BleProtocol_UpdateRemoteDanger();
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_RESPONSE_10MS);
 		BleProtocol_CompleteUiAction(s_system_tick_ms);
 		control_cycle_completed = 1U;
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_50ms, 50U))
 	{
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_UI_50MS);
 		Ui_Task50ms();
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_100ms, 100U))
 	{
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_SENSOR_100MS);
 		Sensor_Task100ms();
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_1000ms, 1000U))
 	{
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_POWER_1000MS);
 		Power_Task1000ms();
+	}
+	if (control_cycle_completed != 0U)
+	{
+		AppDiagnostics_SetStage(APP_DIAG_STAGE_RUN_COMPLETE);
 	}
 
 	/* 处理周期任务产生的状态切换请求�? */
@@ -1271,6 +1609,7 @@ static uint8_t EventQueue_Pop(AppEvent_t *event)
 
 static void App_HandleEvent(AppEvent_t event)
 {
+	AppDiagnostics_RecordEvent(event);
 	LOG_I("t=%u event=%s state=%s", s_system_tick_ms,
 	      App_EventName(event), App_StateName(s_app.state));
 
@@ -3261,6 +3600,8 @@ static void Control_Task10ms(void)
 {
 	static uint8_t previous_pwr1;
 	static uint8_t previous_pwr2;
+	uint8_t pwr1_was_active;
+	uint8_t pwr2_was_active;
 	uint8_t output_allowed;
 	uint8_t requested_pwr1;
 	uint8_t requested_pwr2;
@@ -3274,6 +3615,8 @@ static void Control_Task10ms(void)
 	                   (s_ui.remaining_seconds != 0U))) ? 1U : 0U;
 	requested_pwr1 = (output_allowed != 0U) ? s_ui.power_ch1 : 0U;
 	requested_pwr2 = (output_allowed != 0U) ? s_ui.power_ch2 : 0U;
+	pwr1_was_active = (Pwr1 != 0U) ? 1U : 0U;
+	pwr2_was_active = (Pwr2 != 0U) ? 1U : 0U;
 
 	if ((Pwr1 == 0U) && (requested_pwr1 != 0U))
 	{
@@ -3286,6 +3629,22 @@ static void Control_Task10ms(void)
 
 	Pwr1 = requested_pwr1;
 	Pwr2 = requested_pwr2;
+	if ((pwr1_was_active == 0U) && (Pwr1 != 0U))
+	{
+		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 1U);
+	}
+	else if ((pwr1_was_active != 0U) && (Pwr1 == 0U))
+	{
+		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 0U);
+	}
+	if ((pwr2_was_active == 0U) && (Pwr2 != 0U))
+	{
+		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 1U);
+	}
+	else if ((pwr2_was_active != 0U) && (Pwr2 == 0U))
+	{
+		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 0U);
+	}
 
 	if ((previous_pwr1 == 0U) && (Pwr1 != 0U))
 	{
@@ -3401,6 +3760,7 @@ int main(void)
 	pin_reset = (RCC_GetFlagStatus(RCC_FLAG_PINRST) != RESET) ? 1U : 0U;
 	low_power_reset = (RCC_GetFlagStatus(RCC_FLAG_LPWRRST) != RESET) ? 1U : 0U;
 	Board_Init();
+	AppDiagnostics_Init();
 	App_Init();
 	LOG_I("t=%u reset flags iwdg=%u bor=%u por=%u pin=%u lpwr=%u",
 	      s_system_tick_ms, watchdog_reset, brownout_reset, power_on_reset,
@@ -3409,6 +3769,7 @@ int main(void)
 	{
 		LOG_W("t=%u reset cause=IWDG", s_system_tick_ms);
 	}
+	AppDiagnostics_LogPrevious(watchdog_reset);
 	RCC_ClrFlag();
 
 #if (APP_IWDG_ENABLE != 0U)
@@ -3433,7 +3794,9 @@ int main(void)
 		    (control_cycle_completed != 0U))
 		{
 			/* Feed only after the complete 10 ms control chain has returned. */
+			AppDiagnostics_SetStage(APP_DIAG_STAGE_WATCHDOG_FEED);
 			IWDG_ReloadKey();
+			AppDiagnostics_SetStage(APP_DIAG_STAGE_WFI);
 		}
 
 		/* 等待下一次中断，避免空转占满 CPU */

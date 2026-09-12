@@ -44,6 +44,17 @@ extern "C" {
 #include "delay.h"
 #include "tm1621c.h"
 
+#define APP_DIAG_FAULT_HARDFAULT   1U
+#define APP_DIAG_FAULT_MEMMANAGE   2U
+#define APP_DIAG_FAULT_BUSFAULT    3U
+#define APP_DIAG_FAULT_USAGEFAULT  4U
+#define APP_DIAG_FAULT_ASSERT      5U
+
+void App_DiagnosticsRecordFaultISR(uint16_t fault_type);
+void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
+                                          const uint32_t *stack_frame,
+                                          uint32_t exc_return);
+
 #define TM1621B_CS_PORT							GPIOC
 #define TM1621B_CS_PIN 							GPIO_PIN_13
 
@@ -188,6 +199,8 @@ extern "C" {
 /* With the nominal 40 kHz LSI and /32 prescaler, 2499 gives about 2 s. */
 #define APP_IWDG_ENABLE                       1U
 #define APP_IWDG_RELOAD_VALUE                 2499U
+/* ARM Cortex-M4 r0p0/r0p1 erratum 838869: disable the default write buffer. */
+#define APP_CORTEX_M4_838869_WORKAROUND_ENABLE 1U
 
 #define APP_BLE_USART_ERROR_OVERRUN          0x01U
 #define APP_BLE_USART_ERROR_FRAME            0x02U
@@ -204,12 +217,17 @@ extern "C" {
 #error "APP_IWDG_ENABLE must be 0 or 1"
 #endif
 
+#if (APP_CORTEX_M4_838869_WORKAROUND_ENABLE > 1U)
+#error "APP_CORTEX_M4_838869_WORKAROUND_ENABLE must be 0 or 1"
+#endif
+
 #if (APP_IWDG_RELOAD_VALUE > 0x0FFFU)
 #error "APP_IWDG_RELOAD_VALUE must fit the 12-bit IWDG reload register"
 #endif
 
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
+void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled);
 void App_FaultSafeShutdownISR(void);
 void App_BleRxByteISR(uint8_t data);
 void App_BleTxReadyISR(void);

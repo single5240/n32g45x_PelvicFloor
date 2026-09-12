@@ -49,6 +49,8 @@ void RCC_Configuration(void)
 {
 //		RCC_ConfigPclk1(RCC_HCLK_DIV4);
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_PWR,ENABLE);
+    RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_BKP, ENABLE);
+    PWR_BackupAccessEnable(ENABLE);
     /* DAC Periph clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_DAC, ENABLE);
     /* GPIO Periph clock enable */
@@ -218,14 +220,10 @@ void TIM1_Configuration(void)
     TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
     TIM_InitOc3(TIM1, &TIM_OCInitStructure);
 
-	/* TIM1 enable update irq */
+	/* The application enables the counter and interrupts only while CH1 is active. */
 	TIM_EnableCtrlPwmOutputs(TIM1, ENABLE);
-	/* TIM1 enable counter */
-	TIM_ConfigInt(TIM1, TIM_INT_UPDATE, ENABLE);
-#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
-	TIM_ConfigInt(TIM1, TIM_INT_CC3, ENABLE);
-#endif
-	TIM_Enable(TIM1, ENABLE);
+	TIM_ConfigInt(TIM1, TIM_INT_UPDATE | TIM_INT_CC3, DISABLE);
+	TIM_Enable(TIM1, DISABLE);
     
 }
 /**
@@ -278,14 +276,9 @@ void TIM8_Configuration(void)
     TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
     TIM_InitOc3(TIM8, &TIM_OCInitStructure);
 
-    /* TIM8 enable update irq */
-    TIM_ConfigInt(TIM8, TIM_INT_UPDATE, ENABLE);
-#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
-    TIM_ConfigInt(TIM8, TIM_INT_CC3, ENABLE);
-#endif
-
-    /* TIM8 enable counter */
-    TIM_Enable(TIM8, ENABLE);
+    /* The application enables the counter and interrupts only while CH2 is active. */
+    TIM_ConfigInt(TIM8, TIM_INT_UPDATE | TIM_INT_CC3, DISABLE);
+    TIM_Enable(TIM8, DISABLE);
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
 }
 
@@ -528,13 +521,19 @@ void NVIC_Configuration(void)
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_UP_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 #if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM1_CC_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_CC_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 #endif
@@ -546,8 +545,11 @@ void NVIC_Configuration(void)
     NVIC_Init(&NVIC_InitStructure);
     /* Enable the USART2 Interrupt */
     NVIC_InitStructure.NVIC_IRQChannel            = USART2_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 1;
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
+    /* Use the same preemption level as the treatment timers so USART2 cannot
+     * stretch an active pulse/deadtime ISR. A higher subpriority wins only
+     * when USART2 and a treatment interrupt are pending at the same time. */
+    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
+    NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelCmd         = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 }

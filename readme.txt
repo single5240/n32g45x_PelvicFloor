@@ -44,7 +44,14 @@ Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时
 
 ## 3. 系统架构
 
-系统没有 RTOS。`SysTick_Handler()` 每 1 ms 只递增时基；主循环执行 `App_RunOnce()`，只有完整执行一次 10 ms 输入、通讯、事件、状态切换和控制链后才喂独立看门狗，空闲时通过 `__WFI()` 等待中断。这样主循环阻塞、系统时基停止或周期业务无法完成时都不会继续喂狗。SysTick 与治疗定时器处于同一抢占级，不会打断治疗 ISR，但挂起时具有更高响应顺序，降低蓝牙和治疗中断叠加时的时基饥饿风险。IWDG 按 40 kHz LSI、32 分频和重装值 2499 配置，标称超时约 2 s。启动日志会输出 IWDG、BOR、POR、外部复位和低功耗复位标志，用于区分软件未喂狗与疑似供电复位。
+系统没有 RTOS。`SysTick_Handler()` 每 1 ms 只递增时基；主循环执行 `App_RunOnce()`，只有完整执行一次 10 ms 输入、通讯、事件、状态切换和控制链后才喂独立看门狗，空闲时通过 `__WFI()` 等待中断。这样主循环阻塞、系统时基停止或周期业务无法完成时都不会继续喂狗。SysTick、USART2 与治疗定时器处于同一抢占级，不会相互抢占治疗 ISR；同时挂起时 SysTick 和 USART2 的响应顺序高于治疗定时器，降低时基及蓝牙接收饥饿风险。IWDG 按 40 kHz LSI、32 分频和重装值 2499 配置，标称超时约 2 s。启动日志会输出 IWDG、BOR、POR、外部复位和低功耗复位标志，用于区分软件未喂狗与疑似供电复位。
+
+为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次快照。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
+
+TIM1/TIM8 仅在对应治疗通道强度非零时启动计数器及 UPDATE/CC3 中断。通道归零、模式切换、关机或故障关断时立即关闭对应定时器中断并清除外设和 NVIC 挂起标志；再次从零档启动时复位计数器后重新使能，避免关机和未使用通道持续产生无效高频中断。
+
+SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外设和 SRAM 写入完成后再进行异常返回。该处理同时作为 Cortex-M4 r0p0/r0p1 勘误 838869 的软件规避措施；启动日志输出 CPUID，供目标芯片内核版本核对。
+对于已确认的 Cortex-M4 r0p0/r0p1，固件还会在 MPU 关闭时设置 `ACTLR.DISDEFWBUF`，全局关闭默认写缓冲，作为勘误 838869 的强化规避。启动日志中的 `actlr` 和 `err838869` 用于确认规避是否实际生效；该措施可能轻微增加 SRAM/外设写入延迟。
 
 | 周期 | 主要工作 |
 | --- | --- |
@@ -105,6 +112,7 @@ Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时
 | `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙 `POWER_LONG` 请求关机。 |
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |
+| `APP_CORTEX_M4_838869_WORKAROUND_ENABLE` | `1` | 对 Cortex-M4 r0p0/r0p1 启用 838869 全局写缓冲规避；可能轻微增加写入延迟。 |
 
 上述蓝牙宏只控制编译门禁，不取消运行时安全检查。治疗或压力输出前仍会检查充电状态、PB7 连接状态及当前应用状态。
 
