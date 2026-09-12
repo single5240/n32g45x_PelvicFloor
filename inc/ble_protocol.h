@@ -9,8 +9,11 @@ extern "C" {
 
 #define BLE_PROTOCOL_VERSION          0x11U
 #define BLE_PROTOCOL_STATUS_LENGTH    15U
+#define BLE_COMMAND_SET_STRENGTH       0x01U
 #define BLE_COMMAND_UI_ACTION         0x10U
 #define BLE_COMMAND_STATUS_NOTIFY     0x91U
+#define BLE_COMMAND_THERAPY_START_NOTIFY 0x93U
+#define BLE_COMMAND_THERAPY_END_NOTIFY 0x94U
 
 typedef enum
 {
@@ -28,6 +31,7 @@ typedef enum
 typedef struct
 {
 	void (*stop_all)(void);
+	BleProtocolResult_t (*set_strength)(uint8_t channel, uint8_t level);
 	BleProtocolResult_t (*ui_action)(uint8_t action);
 	void (*link_state)(uint8_t connected);
 	void (*remote_danger_timeout)(void);
@@ -58,6 +62,8 @@ void BleProtocol_InputByte(uint8_t data, uint32_t now_ms);
 void BleProtocol_Task(uint32_t now_ms);
 void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_NotifyStatus(uint32_t now_ms);
+void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile);
+void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds);
 void BleProtocol_SetRemoteDangerActive(uint8_t active);
 uint8_t BleProtocol_ReadTxByte(uint8_t *data);
 uint8_t BleProtocol_HasTxData(void);

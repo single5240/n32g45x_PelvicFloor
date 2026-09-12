@@ -60,6 +60,11 @@ static BleProtocolResult_t BleCommand_StopAll(const uint8_t *data,
 	                                           uint32_t now_ms,
 	                                           uint8_t *response,
 	                                           uint8_t *response_length);
+static BleProtocolResult_t BleCommand_SetStrength(const uint8_t *data,
+                                                 uint8_t length,
+                                                 uint32_t now_ms,
+                                                 uint8_t *response,
+                                                 uint8_t *response_length);
 static BleProtocolResult_t BleCommand_UiAction(const uint8_t *data,
 	                                            uint8_t length,
 	                                            uint32_t now_ms,
@@ -78,6 +83,7 @@ static BleProtocolResult_t BleCommand_Keepalive(const uint8_t *data,
 
 static const BleCommandEntry_t s_command_table[] =
 {
+	{BLE_COMMAND_SET_STRENGTH,   2U, BleCommand_SetStrength},
 	{BLE_COMMAND_STOP_ALL,       0U, BleCommand_StopAll},
 	{BLE_COMMAND_UI_ACTION,      1U, BleCommand_UiAction},
 	{BLE_COMMAND_GET_STATUS,     0U, BleCommand_GetStatus},
@@ -415,6 +421,26 @@ void BleProtocol_NotifyStatus(uint32_t now_ms)
 	                              BLE_PROTOCOL_STATUS_LENGTH);
 }
 
+void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile)
+{
+	uint8_t data[2];
+
+	data[0] = channel;
+	data[1] = profile;
+	BleProtocol_QueueNotification(BLE_COMMAND_THERAPY_START_NOTIFY,
+	                              data, (uint8_t)sizeof(data));
+}
+
+void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds)
+{
+	uint8_t data[2];
+
+	data[0] = (uint8_t)(duration_seconds & 0xFFU);
+	data[1] = (uint8_t)(duration_seconds >> 8U);
+	BleProtocol_QueueNotification(BLE_COMMAND_THERAPY_END_NOTIFY,
+	                              data, (uint8_t)sizeof(data));
+}
+
 void BleProtocol_SetRemoteDangerActive(uint8_t active)
 {
 	s_ble.remote_danger_active = (active != 0U) ? 1U : 0U;
@@ -474,6 +500,30 @@ static BleProtocolResult_t BleCommand_StopAll(const uint8_t *data,
 	s_ble.callbacks.get_status(now_ms, response);
 	*response_length = BLE_PROTOCOL_STATUS_LENGTH;
 	return BLE_RESULT_OK;
+}
+
+static BleProtocolResult_t BleCommand_SetStrength(const uint8_t *data,
+                                                 uint8_t length,
+                                                 uint32_t now_ms,
+                                                 uint8_t *response,
+                                                 uint8_t *response_length)
+{
+	BleProtocolResult_t result;
+
+	(void)length;
+	if ((s_ble.callbacks.set_strength == 0) ||
+	    (s_ble.callbacks.get_status == 0))
+	{
+		return BLE_RESULT_INTERNAL_ERROR;
+	}
+
+	result = s_ble.callbacks.set_strength(data[0], data[1]);
+	if (result == BLE_RESULT_OK)
+	{
+		s_ble.callbacks.get_status(now_ms, response);
+		*response_length = BLE_PROTOCOL_STATUS_LENGTH;
+	}
+	return result;
 }
 
 static BleProtocolResult_t BleCommand_UiAction(const uint8_t *data,

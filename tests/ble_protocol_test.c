@@ -9,6 +9,10 @@
 static uint8_t s_stop_count;
 static uint8_t s_action_count;
 static BleProtocolResult_t s_action_result;
+static uint8_t s_strength_count;
+static uint8_t s_strength_channel;
+static uint8_t s_strength_level;
+static BleProtocolResult_t s_strength_result;
 static uint8_t s_link_state;
 static uint8_t s_danger_timeout_count;
 
@@ -116,6 +120,14 @@ static void AssertResponse(uint8_t request_command, uint8_t result,
 	assert(response[length - 1U] == Crc8(response, length - 1U));
 }
 
+static BleProtocolResult_t SetStrength(uint8_t channel, uint8_t level)
+{
+	s_strength_count++;
+	s_strength_channel = channel;
+	s_strength_level = level;
+	return s_strength_result;
+}
+
 static void AssertStatusNotification(void)
 {
 	uint8_t response[38U];
@@ -135,6 +147,26 @@ static void AssertStatusNotification(void)
 	assert(response[length - 1U] == Crc8(response, length - 1U));
 }
 
+static void AssertTherapyNotification(uint8_t command, const uint8_t *data,
+	                                    uint8_t data_length)
+{
+	uint8_t response[38U];
+	size_t length = ReadResponse(response, sizeof(response));
+	uint8_t index;
+
+	assert(length == (size_t)(6U + data_length));
+	assert(response[0] == 0x5AU);
+	assert(response[1] == 0xA5U);
+	assert(response[2] == BLE_PROTOCOL_VERSION);
+	assert(response[3] == data_length);
+	assert(response[4] == command);
+	for (index = 0U; index < data_length; index++)
+	{
+		assert(response[5U + index] == data[index]);
+	}
+	assert(response[length - 1U] == Crc8(response, length - 1U));
+}
+
 int main(void)
 {
 	BleProtocolCallbacks_t callbacks;
@@ -145,6 +177,7 @@ int main(void)
 	BleProtocolStats_t stats;
 
 	callbacks.stop_all = StopAll;
+	callbacks.set_strength = SetStrength;
 	callbacks.ui_action = UiAction;
 	callbacks.link_state = LinkState;
 	callbacks.remote_danger_timeout = RemoteDangerTimeout;
@@ -163,6 +196,30 @@ int main(void)
 	assert(s_link_state == 1U);
 	BleProtocol_NotifyStatus(50U);
 	AssertStatusNotification();
+	{
+		const uint8_t therapy_start[] = {2U, 1U};
+		const uint8_t therapy_end[] = {0x34U, 0x12U};
+
+		BleProtocol_NotifyTherapyStart(therapy_start[0], therapy_start[1]);
+		AssertTherapyNotification(BLE_COMMAND_THERAPY_START_NOTIFY,
+		                          therapy_start, (uint8_t)sizeof(therapy_start));
+		BleProtocol_NotifyTherapyEnd(0x1234U);
+		AssertTherapyNotification(BLE_COMMAND_THERAPY_END_NOTIFY,
+		                          therapy_end, (uint8_t)sizeof(therapy_end));
+	}
+
+	{
+		const uint8_t strength[] = {0U, 30U};
+
+		s_strength_result = BLE_RESULT_OK;
+		SendFrame(BLE_COMMAND_SET_STRENGTH, strength,
+		          (uint8_t)sizeof(strength), 60U);
+		AssertResponse(BLE_COMMAND_SET_STRENGTH, BLE_RESULT_OK,
+		               BLE_PROTOCOL_STATUS_LENGTH);
+		assert(s_strength_count == 1U);
+		assert(s_strength_channel == 0U);
+		assert(s_strength_level == 30U);
+	}
 
 	SendFrame(0x90U, 0, 0U, 100U);
 	AssertResponse(0x90U, BLE_RESULT_OK, 0U);

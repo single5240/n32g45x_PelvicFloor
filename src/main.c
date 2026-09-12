@@ -465,6 +465,12 @@ typedef struct
 	uint8_t mismatch_reported;
 } BleStaContext_t;
 
+typedef struct
+{
+	uint8_t active;
+	uint16_t elapsed_seconds;
+} TherapySessionContext_t;
+
 /* SysTick 中断�? 1 ms 增加一次。中断和主循环共享，因此必须使用 volatile�? */
 static volatile uint32_t s_system_tick_ms = 0U;
 static AppContext_t s_app;
@@ -491,6 +497,7 @@ static uint8_t s_ble_pending_remote_danger;
 static uint8_t s_ble_remote_danger_active;
 static uint8_t s_ble_protocol_link_active;
 static BleStaContext_t s_ble_sta;
+static TherapySessionContext_t s_therapy_session;
 static volatile BleCommCounters_t s_ble_comm_counters;
 static uint8_t s_iwdg_active;
 static AppDiagSnapshot_t s_diag_previous;
@@ -505,6 +512,8 @@ static void Board_Init(void);
 static void Core_ApplyErrataWorkarounds(void);
 static void Board_EnterSafeState(void);
 static void Treatment_StopOutputs(void);
+static void Treatment_CancelSession(void);
+static void Treatment_CompleteSession(void);
 static void Pressure_StopOutputs(void);
 static void Pressure_ApplyOutputs(void);
 static void App_Init(void);
@@ -575,6 +584,8 @@ static void BleSta_Task10ms(void);
 static void BleProtocol_RxTask10ms(void);
 static void BleProtocol_TxTask(void);
 static void BleProtocol_StopAll(void);
+static BleProtocolResult_t BleProtocol_SetStrength(uint8_t channel,
+                                                   uint8_t level);
 static BleProtocolResult_t BleProtocol_UiAction(uint8_t action);
 static void BleProtocol_LinkState(uint8_t connected);
 static void BleProtocol_RemoteDangerTimeout(void);
@@ -1029,6 +1040,23 @@ static void Treatment_StopOutputs(void)
 	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
 }
 
+static void Treatment_CancelSession(void)
+{
+	s_therapy_session.active = 0U;
+	s_therapy_session.elapsed_seconds = 0U;
+}
+
+static void Treatment_CompleteSession(void)
+{
+	if ((s_therapy_session.active != 0U) &&
+	    (s_ble_name.protocol_active != 0U) &&
+	    (s_ble_sta.stable_connected != 0U))
+	{
+		BleProtocol_NotifyTherapyEnd(s_therapy_session.elapsed_seconds);
+	}
+	Treatment_CancelSession();
+}
+
 static void Pressure_StopOutputs(void)
 {
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
@@ -1099,9 +1127,11 @@ static void App_Init(void)
 	s_scheduler.last_1000ms = s_system_tick_ms;
 
 	Ui_InitModel();
+	Treatment_CancelSession();
 	Battery_InitModel();
 	Key_Init();
 	ble_callbacks.stop_all = BleProtocol_StopAll;
+	ble_callbacks.set_strength = BleProtocol_SetStrength;
 	ble_callbacks.ui_action = BleProtocol_UiAction;
 	ble_callbacks.link_state = BleProtocol_LinkState;
 	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
@@ -1246,6 +1276,7 @@ static void App_StateExit(AppState_t state)
 	{
 		case APP_STATE_THERAPY:
 			Treatment_StopOutputs();
+			Treatment_CompleteSession();
 			break;
 
 		case APP_STATE_PRESSURE:
@@ -1710,6 +1741,7 @@ static void App_HandleEvent(AppEvent_t event)
 				uint8_t next_formula = (uint8_t)((s_ui.formula + 1U) %
 				                                 TREATMENT_PULSE_MODE_COUNT);
 				Treatment_StopOutputs();
+				Treatment_CompleteSession();
 				s_ui.formula = next_formula;
 				TreatmentPulse_SetMode(next_formula);
 				LOG_I("t=%u formula=P%u, power reset", s_system_tick_ms,
@@ -2900,6 +2932,7 @@ static void Ui_Countdown1s(void)
 	    (s_ui.remaining_seconds == 0U))
 	{
 		Treatment_StopOutputs();
+		Treatment_CompleteSession();
 		LOG_W("t=%u therapy stopped: zero remaining time", s_system_tick_ms);
 		Ui_RecordActivity();
 		s_app.ui_dirty = 1U;
@@ -2916,10 +2949,17 @@ static void Ui_Countdown1s(void)
 		s_ui.remaining_seconds--;
 	}
 
+	if ((s_therapy_session.active != 0U) &&
+	    (s_therapy_session.elapsed_seconds < 0xFFFFU))
+	{
+		s_therapy_session.elapsed_seconds++;
+	}
+
 	if ((s_ui.remaining_minutes == 0U) &&
 	    (s_ui.remaining_seconds == 0U))
 	{
 		Treatment_StopOutputs();
+		Treatment_CompleteSession();
 		LOG_I("t=%u therapy completed, time=0 power=0/0", s_system_tick_ms);
 		Ui_RecordActivity();
 		s_app.ui_dirty = 1U;
@@ -3229,12 +3269,57 @@ static void BleProtocol_TxTask(void)
 static void BleProtocol_StopAll(void)
 {
 	Treatment_StopOutputs();
+	Treatment_CompleteSession();
 	Pressure_StopOutputs();
 	s_ble_pending_remote_danger = 0U;
 	s_ble_remote_danger_active = 0U;
 	BleProtocol_SetRemoteDangerActive(0U);
 	s_app.ui_dirty = 1U;
 	LOG_W("t=%u BLE STOP_ALL applied", s_system_tick_ms);
+}
+
+static BleProtocolResult_t BleProtocol_SetStrength(uint8_t channel,
+                                                   uint8_t level)
+{
+	uint8_t *power;
+
+	if ((channel > 1U) || (level > UI_MAX_POWER))
+	{
+		return BLE_RESULT_BAD_PARAMETER;
+	}
+	if (s_app.state != APP_STATE_THERAPY)
+	{
+		return BLE_RESULT_STATE_CONFLICT;
+	}
+	if (level != 0U)
+	{
+#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE == 0U)
+		return BLE_RESULT_SAFETY_LOCK;
+#endif
+		if (s_ui.charger_connected != 0U)
+		{
+			return BLE_RESULT_CHARGING_LOCK;
+		}
+		if (s_ble_sta.stable_connected == 0U)
+		{
+			return BLE_RESULT_SAFETY_LOCK;
+		}
+		if ((s_ui.power_ch1 == 0U) && (s_ui.power_ch2 == 0U) &&
+		    (s_ui.remaining_minutes == 0U) &&
+		    (s_ui.remaining_seconds == 0U))
+		{
+			s_ui.remaining_minutes = s_ui.set_minutes;
+		}
+		s_ble_pending_remote_danger = 1U;
+	}
+
+	power = (channel == 0U) ? &s_ui.power_ch1 : &s_ui.power_ch2;
+	*power = level;
+	s_app.ui_dirty = 1U;
+	LOG_I("t=%u BLE set strength ch=%u mode=P%u level=%u",
+	      s_system_tick_ms, (uint8_t)(channel + 1U),
+	      (uint8_t)(s_ui.formula + 1U), level);
+	return BLE_RESULT_OK;
 }
 
 static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
@@ -3311,6 +3396,7 @@ static void BleProtocol_LinkState(uint8_t connected)
 static void BleProtocol_RemoteDangerTimeout(void)
 {
 	Treatment_StopOutputs();
+	Treatment_CompleteSession();
 	Pressure_StopOutputs();
 	s_ble_pending_remote_danger = 0U;
 	s_ble_remote_danger_active = 0U;
@@ -3618,6 +3704,7 @@ static void Control_Task10ms(void)
 	uint8_t output_allowed;
 	uint8_t requested_pwr1;
 	uint8_t requested_pwr2;
+	uint8_t therapy_start_channel;
 
 	Ui_BuzzerTask10ms();
 
@@ -3630,6 +3717,12 @@ static void Control_Task10ms(void)
 	requested_pwr2 = (output_allowed != 0U) ? s_ui.power_ch2 : 0U;
 	pwr1_was_active = (Pwr1 != 0U) ? 1U : 0U;
 	pwr2_was_active = (Pwr2 != 0U) ? 1U : 0U;
+	if ((requested_pwr1 == 0U) && (requested_pwr2 == 0U) &&
+	    ((pwr1_was_active != 0U) || (pwr2_was_active != 0U)))
+	{
+		/* 两通道均降为 0 仅暂停会话，但必须立即走统一硬件安全关断。 */
+		Treatment_StopOutputs();
+	}
 
 	if ((Pwr1 == 0U) && (requested_pwr1 != 0U))
 	{
@@ -3657,6 +3750,20 @@ static void Control_Task10ms(void)
 	else if ((pwr2_was_active != 0U) && (Pwr2 == 0U))
 	{
 		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 0U);
+	}
+
+	if ((s_therapy_session.active == 0U) &&
+	    ((Pwr1 != 0U) || (Pwr2 != 0U)))
+	{
+		therapy_start_channel = ((Pwr1 != 0U) && (Pwr2 != 0U)) ? 2U :
+		                        ((Pwr1 != 0U) ? 0U : 1U);
+		s_therapy_session.active = 1U;
+		s_therapy_session.elapsed_seconds = 0U;
+		if ((s_ble_name.protocol_active != 0U) &&
+		    (s_ble_sta.stable_connected != 0U))
+		{
+			BleProtocol_NotifyTherapyStart(therapy_start_channel, s_ui.formula);
+		}
 	}
 
 	if ((previous_pwr1 == 0U) && (Pwr1 != 0U))

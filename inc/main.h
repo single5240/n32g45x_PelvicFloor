@@ -200,7 +200,7 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 #define APP_IWDG_ENABLE                       1U
 #define APP_IWDG_RELOAD_VALUE                 2499U
 /* Diagnostic gate: keep the buzzer timer and PB1 output disabled when 0. */
-#define BUZZER_OUTPUT_ENABLE                  0U
+#define BUZZER_OUTPUT_ENABLE                  1U
 /* ARM Cortex-M4 r0p0/r0p1 erratum 838869: disable the default write buffer. */
 #define APP_CORTEX_M4_838869_WORKAROUND_ENABLE 1U
 
