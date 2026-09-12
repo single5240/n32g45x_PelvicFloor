@@ -271,12 +271,16 @@ uint16_t Set_Value = 55;
 #define TREATMENT_BRIDGE_LEFT   1U
 #define TREATMENT_BRIDGE_RIGHT  2U
 
+static volatile uint8_t s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
+static volatile uint8_t s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
+
 static void TreatmentPulse_SelectCh1Leg(uint8_t leg)
 {
 	/* Always turn both legs off before selecting the next polarity. */
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
 
+#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
 	if (leg == TREATMENT_BRIDGE_LEFT)
 	{
 		TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_ENABLE);
@@ -285,6 +289,9 @@ static void TreatmentPulse_SelectCh1Leg(uint8_t leg)
 	{
 		TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_ENABLE);
 	}
+#else
+	(void)leg;
+#endif
 }
 
 static void TreatmentPulse_SelectCh2Leg(uint8_t leg)
@@ -293,6 +300,7 @@ static void TreatmentPulse_SelectCh2Leg(uint8_t leg)
 	TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);
 	TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_DISABLE);
 
+#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
 	if (leg == TREATMENT_BRIDGE_LEFT)
 	{
 		TIM_EnableCapCmpChN(TIM8, TIM_CH_1, TIM_CAP_CMP_N_ENABLE);
@@ -300,6 +308,39 @@ static void TreatmentPulse_SelectCh2Leg(uint8_t leg)
 	else if (leg == TREATMENT_BRIDGE_RIGHT)
 	{
 		TIM_EnableCapCmpChN(TIM8, TIM_CH_2, TIM_CAP_CMP_N_ENABLE);
+	}
+#else
+	(void)leg;
+#endif
+}
+
+void TIM1_CC_IRQHandler(void)
+{
+	if (TIM_GetIntStatus(TIM1, TIM_INT_CC3) != RESET)
+	{
+		uint8_t leg = s_treatment_ch1_pending_leg;
+
+		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
+		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
+		if ((Pwr1 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
+		{
+			TreatmentPulse_SelectCh1Leg(leg);
+		}
+	}
+}
+
+void TIM8_CC_IRQHandler(void)
+{
+	if (TIM_GetIntStatus(TIM8, TIM_INT_CC3) != RESET)
+	{
+		uint8_t leg = s_treatment_ch2_pending_leg;
+
+		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
+		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
+		if ((Pwr2 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
+		{
+			TreatmentPulse_SelectCh2Leg(leg);
+		}
 	}
 }
 
@@ -376,6 +417,8 @@ void TIM1_UP_IRQHandler(void)
 	if (TIM_GetIntStatus(TIM1, TIM_INT_UPDATE) != RESET)
 	{
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
+		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
+		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
 
 		if (Pwr1)									////
 		{
@@ -692,12 +735,12 @@ void TIM1_UP_IRQHandler(void)
 			Tim1_Count++;
 			if (Tim1_Count == 1U)
 			{
-				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_LEFT);
+				s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_LEFT;
 			}
 			else if (Tim1_Count == 2U)
 			{
 				Tim1_Count = 0U;
-				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_RIGHT);
+				s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_RIGHT;
 			}
 		}
 		else
@@ -713,6 +756,8 @@ void TIM8_UP_IRQHandler(void)
 	if (TIM_GetIntStatus(TIM8, TIM_INT_UPDATE) != RESET)
 	{
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
+		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
+		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
 		if (Pwr2)
 		{
 			E2_Step++;
@@ -1029,12 +1074,12 @@ void TIM8_UP_IRQHandler(void)
 			Tim8_Count++;
 			if (Tim8_Count == 1U)
 			{
-				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_LEFT);
+				s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_LEFT;
 			}
 			else if (Tim8_Count == 2U)
 			{
 				Tim8_Count = 0U;
-				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_RIGHT);
+				s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_RIGHT;
 			}
 		}
 		else

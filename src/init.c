@@ -177,7 +177,7 @@ void TIM1_Configuration(void)
     TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);
     TIM_InitOcStruct(&TIM_OCInitStructure);
     /* Time base configuration */
-	TIM_TimeBaseStructure.Period    = 7999;////way1:2kHZ
+	TIM_TimeBaseStructure.Period    = TREATMENT_TIMER_RELOAD_VALUE;////way1:2kHZ
     TIM_TimeBaseStructure.Prescaler = 7;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_DOWN;
@@ -208,10 +208,20 @@ void TIM1_Configuration(void)
 
     TIM_InitOc2(TIM1, &TIM_OCInitStructure);
 
+    /* CH3 is internal timing only: its compare interrupt ends bridge deadtime. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
+    TIM_InitOc3(TIM1, &TIM_OCInitStructure);
+
 	/* TIM1 enable update irq */
 	TIM_EnableCtrlPwmOutputs(TIM1, ENABLE);
 	/* TIM1 enable counter */
 	TIM_ConfigInt(TIM1, TIM_INT_UPDATE, ENABLE);
+#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
+	TIM_ConfigInt(TIM1, TIM_INT_CC3, ENABLE);
+#endif
 	TIM_Enable(TIM1, ENABLE);
     
 }
@@ -226,7 +236,7 @@ void TIM8_Configuration(void)
     TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);
     TIM_InitOcStruct(&TIM_OCInitStructure);
     /* Time base configuration */
-    TIM_TimeBaseStructure.Period    = 7999;////way2:2kHZ
+    TIM_TimeBaseStructure.Period    = TREATMENT_TIMER_RELOAD_VALUE;////way2:2kHZ
     TIM_TimeBaseStructure.Prescaler = 7;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_DOWN;
@@ -258,8 +268,18 @@ void TIM8_Configuration(void)
 
     TIM_InitOc2(TIM8, &TIM_OCInitStructure);
 
+    /* CH3 is internal timing only: its compare interrupt ends bridge deadtime. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
+    TIM_InitOc3(TIM8, &TIM_OCInitStructure);
+
     /* TIM8 enable update irq */
     TIM_ConfigInt(TIM8, TIM_INT_UPDATE, ENABLE);
+#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
+    TIM_ConfigInt(TIM8, TIM_INT_CC3, ENABLE);
+#endif
 
     /* TIM8 enable counter */
     TIM_Enable(TIM8, ENABLE);
@@ -507,6 +527,14 @@ void NVIC_Configuration(void)
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_UP_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
+#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
+    NVIC_InitStructure.NVIC_IRQChannel                   = TIM1_CC_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+    NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_CC_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
+    NVIC_Init(&NVIC_InitStructure);
+#endif
     /* Enable the TIM2 global Interrupt */
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM2_IRQn;
 //    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
