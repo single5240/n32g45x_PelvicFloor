@@ -83,7 +83,7 @@ static BleProtocolResult_t BleCommand_Keepalive(const uint8_t *data,
 
 static const BleCommandEntry_t s_command_table[] =
 {
-	{BLE_COMMAND_SET_STRENGTH,   2U, BleCommand_SetStrength},
+	{BLE_COMMAND_SET_STRENGTH,   1U, BleCommand_SetStrength},
 	{BLE_COMMAND_STOP_ALL,       0U, BleCommand_StopAll},
 	{BLE_COMMAND_UI_ACTION,      1U, BleCommand_UiAction},
 	{BLE_COMMAND_GET_STATUS,     0U, BleCommand_GetStatus},
@@ -517,7 +517,7 @@ static BleProtocolResult_t BleCommand_SetStrength(const uint8_t *data,
 		return BLE_RESULT_INTERNAL_ERROR;
 	}
 
-	result = s_ble.callbacks.set_strength(data[0], data[1]);
+	result = s_ble.callbacks.set_strength(data[0]);
 	if (result == BLE_RESULT_OK)
 	{
 		s_ble.callbacks.get_status(now_ms, response);

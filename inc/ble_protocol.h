@@ -31,7 +31,7 @@ typedef enum
 typedef struct
 {
 	void (*stop_all)(void);
-	BleProtocolResult_t (*set_strength)(uint8_t channel, uint8_t level);
+	BleProtocolResult_t (*set_strength)(uint8_t level);
 	BleProtocolResult_t (*ui_action)(uint8_t action);
 	void (*link_state)(uint8_t connected);
 	void (*remote_danger_timeout)(void);

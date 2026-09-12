@@ -10,7 +10,6 @@ static uint8_t s_stop_count;
 static uint8_t s_action_count;
 static BleProtocolResult_t s_action_result;
 static uint8_t s_strength_count;
-static uint8_t s_strength_channel;
 static uint8_t s_strength_level;
 static BleProtocolResult_t s_strength_result;
 static uint8_t s_link_state;
@@ -120,10 +119,9 @@ static void AssertResponse(uint8_t request_command, uint8_t result,
 	assert(response[length - 1U] == Crc8(response, length - 1U));
 }
 
-static BleProtocolResult_t SetStrength(uint8_t channel, uint8_t level)
+static BleProtocolResult_t SetStrength(uint8_t level)
 {
 	s_strength_count++;
-	s_strength_channel = channel;
 	s_strength_level = level;
 	return s_strength_result;
 }
@@ -209,16 +207,20 @@ int main(void)
 	}
 
 	{
-		const uint8_t strength[] = {0U, 30U};
+		const uint8_t strength = 30U;
+		const uint8_t old_strength[] = {0U, 30U};
 
 		s_strength_result = BLE_RESULT_OK;
-		SendFrame(BLE_COMMAND_SET_STRENGTH, strength,
-		          (uint8_t)sizeof(strength), 60U);
+		SendFrame(BLE_COMMAND_SET_STRENGTH, &strength, 1U, 60U);
 		AssertResponse(BLE_COMMAND_SET_STRENGTH, BLE_RESULT_OK,
 		               BLE_PROTOCOL_STATUS_LENGTH);
 		assert(s_strength_count == 1U);
-		assert(s_strength_channel == 0U);
 		assert(s_strength_level == 30U);
+
+		SendFrame(BLE_COMMAND_SET_STRENGTH, old_strength,
+		          (uint8_t)sizeof(old_strength), 61U);
+		AssertResponse(BLE_COMMAND_SET_STRENGTH, BLE_RESULT_BAD_LENGTH, 0U);
+		assert(s_strength_count == 1U);
 	}
 
 	SendFrame(0x90U, 0, 0U, 100U);
