@@ -707,7 +707,6 @@ static void Pressure_StopOutputs(void)
 	TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_DISABLE);
 	SWEN_OFF;
 	s_pressure_output_action = PRESSURE_ACTION_IDLE;
-	BATEN_OFF;
 	s_pressure_adc_sampling_active = 0U;
 	s_pressure_adc_pause_ticks = 0U;
 	if (s_pressure_adc_initialized != 0U)
@@ -1827,6 +1826,7 @@ static void Battery_StartSession(void)
 	Battery_Stop();
 	Battery_InitModel();
 	s_battery.session_active = 1U;
+	BATEN_ON;
 	AppUi_SetBattery(0U, 0U);
 }
 
@@ -2120,13 +2120,16 @@ static uint8_t Battery_Task100ms(void)
 
 	if (working_state == 0U)
 	{
+		BATEN_OFF;
 		if (s_battery.measurement_pending != 0U)
 		{
-			BATEN_OFF;
 			s_battery.measurement_pending = 0U;
 		}
 		return 0U;
 	}
+
+	/* 开机、工作和充电期间保持 BATEN 有效，避免周期切换扰动模拟前端。 */
+	BATEN_ON;
 
 	if (s_battery.retry_ticks != 0U)
 	{
@@ -2175,14 +2178,6 @@ static uint8_t Battery_Task100ms(void)
 			s_battery.retry_ticks = BATTERY_ADC_RETRY_TICKS;
 		}
 
-		if (pressure_mode == 0U)
-		{
-			BATEN_OFF;
-		}
-		else
-		{
-			BATEN_ON;
-		}
 		s_battery.measurement_pending = 0U;
 		s_battery.next_sample_ticks = (pressure_mode != 0U) ?
 		                              BATTERY_PRESSURE_IDLE_TICKS :
@@ -2196,8 +2191,7 @@ static uint8_t Battery_Task100ms(void)
 		return 0U;
 	}
 
-	/* 只在采样前打开分压检测电路，下一�? 100 ms 任务再读取�? */
-	BATEN_ON;
+	/* BATEN 已持续有效，下一次 100 ms 任务读取稳定后的分压。 */
 	s_battery.measurement_pending = 1U;
 	return 0U;
 }
@@ -2905,7 +2899,9 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 	}
 	if ((entry->flags & BLE_ACTION_FLAG_POWER_OFF_LOCK) != 0U)
 	{
+#if (BLE_REMOTE_POWER_OFF_CONTROL_ENABLE == 0U)
 		return BLE_RESULT_SAFETY_LOCK;
+#endif
 	}
 	if (((entry->flags & BLE_ACTION_FLAG_TREATMENT_DANGER) != 0U) &&
 	    ((action == 6U) || (Pwr1 != 0U) || (Pwr2 != 0U)))

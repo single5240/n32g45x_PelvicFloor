@@ -150,7 +150,7 @@ extern "C" {
 /* 台架联调：启用双通道 DAC 包络输出；量产前仍需完成负载幅值验证。 */
 #define TREATMENT_DAC_OUTPUT_ENABLE 1U
 /* 台架联调：置 1 后启用桥臂 PWM；死区未验收前默认保持关闭。 */
-#define TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE 0U
+#define TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE 1U
 /* 联调值基于当前 128 MHz 定时器时钟和预分频 7，量产值待实测确认。 */
 #define TREATMENT_BRIDGE_DEADTIME_US        50U
 #define TREATMENT_TIMER_TICKS_PER_US        16U
@@ -159,7 +159,7 @@ extern "C" {
 	(TREATMENT_TIMER_RELOAD_VALUE -          \
 	 (TREATMENT_BRIDGE_DEADTIME_US * TREATMENT_TIMER_TICKS_PER_US))
 /* 台架联调：置 1 后两路 DAC 使用固定码值；量产构建必须保持关闭。 */
-#define TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE 1U
+#define TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE 0U
 #define TREATMENT_DAC_FIXED_VALUE             2000U
 
 #if (TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE > 1U)
@@ -179,17 +179,19 @@ extern "C" {
 #error "TREATMENT_DAC_FIXED_VALUE must not exceed 3800"
 #endif
 
-/* Remote dangerous actions stay disabled until the corresponding hardware
- * calibration and bench verification have been completed. */
-#define BLE_REMOTE_TREATMENT_CONTROL_ENABLE 0U
-#define BLE_REMOTE_PRESSURE_CONTROL_ENABLE  0U
+/* Remote actions use the local event/state-machine path. Dangerous output
+ * actions still require the runtime charging and physical-link checks. */
+#define BLE_REMOTE_POWER_OFF_CONTROL_ENABLE 1U
+#define BLE_REMOTE_TREATMENT_CONTROL_ENABLE 1U
+#define BLE_REMOTE_PRESSURE_CONTROL_ENABLE  1U
 
 #define APP_BLE_USART_ERROR_OVERRUN          0x01U
 #define APP_BLE_USART_ERROR_FRAME            0x02U
 #define APP_BLE_USART_ERROR_NOISE            0x04U
 #define APP_BLE_USART_ERROR_PARITY           0x08U
 
-#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE > 1U) || \
+#if (BLE_REMOTE_POWER_OFF_CONTROL_ENABLE > 1U) || \
+    (BLE_REMOTE_TREATMENT_CONTROL_ENABLE > 1U) || \
     (BLE_REMOTE_PRESSURE_CONTROL_ENABLE > 1U)
 #error "BLE remote control gates must be 0 or 1"
 #endif
