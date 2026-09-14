@@ -1160,11 +1160,6 @@ static void Treatment_CompleteSession(TherapyEndType_t end_type)
 	}
 	else
 	{
-		if (s_therapy_session.accumulated_active_ms < 600000UL)
-		{
-			Treatment_CancelSession();
-			return;
-		}
 		duration_seconds = s_therapy_session.accumulated_active_ms / 1000U;
 	}
 
@@ -1188,6 +1183,12 @@ static void Treatment_CompleteSession(TherapyEndType_t end_type)
 		                             s_therapy_session.end_level_ch2);
 	}
 	Treatment_CancelSession();
+	if (end_type == THERAPY_END_BY_ACTIVE_STOP)
+	{
+		s_ui.remaining_minutes = s_ui.set_minutes;
+		s_ui.remaining_seconds = 0U;
+		s_app.ui_dirty = 1U;
+	}
 }
 
 static void Pressure_ResetProcess(void)
@@ -2040,7 +2041,7 @@ static void App_HandleEvent(AppEvent_t event)
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				Ui_Beep(1U);
-				/* 疗程结束后保持显�? 0，直到用户再次增加强度开始新疗程�? */
+				/* 倒计时自然结束后保持显示 0，直到用户再次增加强度开始新疗程。 */
 				if ((s_ui.power_ch1 == 0U) &&
 				    (s_ui.power_ch2 == 0U) &&
 				    (s_ui.remaining_minutes == 0U) &&
