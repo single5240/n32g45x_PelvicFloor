@@ -50,11 +50,13 @@ extern uint8_t Formula;	 /////处方0，1,2
 extern uint8_t WorkType; ////0:治疗模式，1：检测模式
 extern volatile uint8_t Pwr1;	 /////0-60档强度
 extern volatile uint8_t Pwr2;
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 extern volatile uint32_t g_diag_tim1_update_count;
 extern volatile uint32_t g_diag_tim8_update_count;
 extern volatile uint32_t g_diag_tim1_cc_count;
 extern volatile uint32_t g_diag_tim8_cc_count;
 extern volatile uint32_t g_diag_usart2_irq_count;
+#endif
 
 extern uint8_t Flash_Flag;
 
@@ -280,7 +282,9 @@ void USART2_IRQHandler(void)
     uint16_t status = USART2->STS;
     uint8_t error_flags = 0U;
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
     g_diag_usart2_irq_count++;
+#endif
 
     if ((status & USART_FLAG_OREF) != 0U)
     {
@@ -378,7 +382,9 @@ void TIM1_CC_IRQHandler(void)
 		uint8_t leg = s_treatment_ch1_pending_leg;
 		uint16_t pulse_end_compare;
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 		g_diag_tim1_cc_count++;
+#endif
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
 		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
 		if ((Pwr1 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
@@ -414,7 +420,9 @@ void TIM8_CC_IRQHandler(void)
 		uint8_t leg = s_treatment_ch2_pending_leg;
 		uint16_t pulse_end_compare;
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 		g_diag_tim8_cc_count++;
+#endif
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
 		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
 		if ((Pwr2 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
@@ -572,7 +580,9 @@ void TIM1_UP_IRQHandler(void)
 {
 	if (TIM_GetIntStatus(TIM1, TIM_INT_UPDATE) != RESET)
 	{
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 		g_diag_tim1_update_count++;
+#endif
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
 		TIM_ConfigInt(TIM1, TIM_INT_CC4, DISABLE);
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
@@ -916,7 +926,9 @@ void TIM8_UP_IRQHandler(void)
 {
 	if (TIM_GetIntStatus(TIM8, TIM_INT_UPDATE) != RESET)
 	{
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 		g_diag_tim8_update_count++;
+#endif
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
 		TIM_ConfigInt(TIM8, TIM_INT_CC4, DISABLE);
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);

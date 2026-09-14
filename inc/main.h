@@ -44,6 +44,9 @@ extern "C" {
 #include "delay.h"
 #include "tm1621c.h"
 
+/* 置 1 后启用卡死定位诊断（备份寄存器快照、阶段记录和故障上下文）。 */
+#define APP_DIAGNOSTICS_ENABLE  0U
+
 #define APP_DIAG_FAULT_HARDFAULT   1U
 #define APP_DIAG_FAULT_MEMMANAGE   2U
 #define APP_DIAG_FAULT_BUSFAULT    3U
@@ -257,6 +260,10 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 #if (APP_IWDG_ENABLE > 1U)
 #error "APP_IWDG_ENABLE must be 0 or 1"
+#endif
+
+#if (APP_DIAGNOSTICS_ENABLE > 1U)
+#error "APP_DIAGNOSTICS_ENABLE must be 0 or 1"
 #endif
 
 #if (BUZZER_OUTPUT_ENABLE > 1U)

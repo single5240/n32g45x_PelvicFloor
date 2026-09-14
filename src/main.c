@@ -74,11 +74,13 @@ uint8_t Formula = 0;  ////处方0,1,2�?
 uint8_t Ico_Formula = 0;
 volatile uint8_t Pwr1 = 0; /////0-60档强�?
 volatile uint8_t Pwr2 = 0;
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 volatile uint32_t g_diag_tim1_update_count;
 volatile uint32_t g_diag_tim8_update_count;
 volatile uint32_t g_diag_tim1_cc_count;
 volatile uint32_t g_diag_tim8_cc_count;
 volatile uint32_t g_diag_usart2_irq_count;
+#endif
 uint16_t Press_Value = 0; /// 压力�?
 uint16_t Buzz_cnt = 0;	  /// 蜂鸣器时�?
 uint8_t Flash_Flag = 0;	  ////闪烁标志�?
@@ -157,6 +159,7 @@ typedef enum
 	APP_EVENT_CHARGER_DISCONNECTED
 } AppEvent_t;
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 #define APP_DIAG_MAGIC                    0xD316U
 #define APP_DIAG_VERSION                  0x0002U
 #define APP_DIAG_SNAPSHOT_PERIOD_MS       100U
@@ -180,7 +183,9 @@ typedef enum
 #define APP_DIAG_STAGE_WATCHDOG_FEED      0x0070U
 #define APP_DIAG_STAGE_WFI                0x0071U
 #define APP_DIAG_STAGE_FAULT              0x00F0U
+#endif
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 typedef struct
 {
 	uint8_t valid;
@@ -209,6 +214,7 @@ typedef struct
 	uint16_t usart_noise_errors;
 	uint16_t usart_parity_errors;
 } AppDiagSnapshot_t;
+#endif
 
 #define APP_STATE_MASK(state)             ((uint8_t)(1U << (uint8_t)(state)))
 #define BLE_ACTION_FLAG_POWER_OFF_LOCK    0x01U
@@ -516,8 +522,10 @@ static BleStaContext_t s_ble_sta;
 static TherapySessionContext_t s_therapy_session;
 static volatile BleCommCounters_t s_ble_comm_counters;
 static uint8_t s_iwdg_active;
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 static AppDiagSnapshot_t s_diag_previous;
 static uint8_t s_diag_tick_divider;
+#endif
 static uint8_t s_core_838869_workaround_active;
 
 static uint8_t s_charger_raw;
@@ -631,13 +639,21 @@ static void Control_Task10ms(void);
 static void Ui_Task50ms(void);
 static void Sensor_Task100ms(void);
 static void Power_Task1000ms(void);
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 static void AppDiagnostics_Init(void);
 static void AppDiagnostics_LogPrevious(uint8_t watchdog_reset);
 static void AppDiagnostics_SetStage(uint16_t stage);
 static void AppDiagnostics_RecordEvent(AppEvent_t event);
 static void AppDiagnostics_SnapshotRuntime(void);
 static const char *AppDiagnostics_StageName(uint16_t stage);
+#define APP_DIAG_SET_STAGE(stage) AppDiagnostics_SetStage(stage)
+#define APP_DIAG_RECORD_EVENT(event) AppDiagnostics_RecordEvent(event)
+#else
+#define APP_DIAG_SET_STAGE(stage) ((void)0)
+#define APP_DIAG_RECORD_EVENT(event) ((void)0)
+#endif
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 static uint32_t AppDiagnostics_Read32(__IO uint16_t *low,
                                       __IO uint16_t *high)
 {
@@ -783,6 +799,7 @@ static void AppDiagnostics_SnapshotRuntime(void)
 	BKP->DAT28 = (uint16_t)s_ble_comm_counters.usart_noise_errors;
 	BKP->DAT29 = (uint16_t)s_ble_comm_counters.usart_parity_errors;
 }
+#endif
 
 void App_DiagnosticsRecordFaultISR(uint16_t fault_type)
 {
@@ -793,6 +810,7 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 	                                      const uint32_t *stack_frame,
 	                                      uint32_t exc_return)
 {
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 	uint32_t frame_address = (uint32_t)stack_frame;
 	const uint32_t *core_frame = stack_frame;
 
@@ -827,8 +845,14 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 	AppDiagnostics_Write32(&BKP->DAT40, &BKP->DAT41, exc_return);
 	__DMB();
 	BKP->DAT3 = APP_DIAG_STAGE_FAULT;
+#else
+	(void)fault_type;
+	(void)stack_frame;
+	(void)exc_return;
+#endif
 }
 
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 static const char *AppDiagnostics_StageName(uint16_t stage)
 {
 	switch (stage)
@@ -852,6 +876,7 @@ static const char *AppDiagnostics_StageName(uint16_t stage)
 		default:                           return "UNKNOWN";
 	}
 }
+#endif
 
 /*
  * 1 ms 系统节拍入口�?
@@ -860,12 +885,15 @@ static const char *AppDiagnostics_StageName(uint16_t stage)
 void App_Tick1msISR(void)
 {
 	s_system_tick_ms++;
+
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 	s_diag_tick_divider++;
 	if (s_diag_tick_divider >= APP_DIAG_SNAPSHOT_PERIOD_MS)
 	{
 		s_diag_tick_divider = 0U;
 		AppDiagnostics_SnapshotRuntime();
 	}
+#endif
 }
 
 void App_FaultSafeShutdownISR(void)
@@ -1308,43 +1336,43 @@ static uint8_t App_RunOnce(void)
 
 	if (Scheduler_IsDue(&s_scheduler.last_10ms, 10U))
 	{
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_INPUT_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_INPUT_10MS);
 		Input_Task10ms();
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_COMM_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_COMM_10MS);
 		Communication_Task10ms();
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_EVENT_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_EVENT_10MS);
 		AppEvent_Task10ms();
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_STATE_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_STATE_10MS);
 		App_ApplyStateTransition();
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_CONTROL_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_CONTROL_10MS);
 		Control_Task10ms();
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_REMOTE_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_REMOTE_10MS);
 		BleProtocol_UpdateRemoteDanger();
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_RESPONSE_10MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_RESPONSE_10MS);
 		BleProtocol_CompleteUiAction(s_system_tick_ms);
 		control_cycle_completed = 1U;
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_50ms, 50U))
 	{
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_UI_50MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_UI_50MS);
 		Ui_Task50ms();
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_100ms, 100U))
 	{
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_SENSOR_100MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_SENSOR_100MS);
 		Sensor_Task100ms();
 	}
 
 	if (Scheduler_IsDue(&s_scheduler.last_1000ms, 1000U))
 	{
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_POWER_1000MS);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_POWER_1000MS);
 		Power_Task1000ms();
 	}
 	if (control_cycle_completed != 0U)
 	{
-		AppDiagnostics_SetStage(APP_DIAG_STAGE_RUN_COMPLETE);
+		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_RUN_COMPLETE);
 	}
 
 	/* 处理周期任务产生的状态切换请求�? */
@@ -1780,7 +1808,7 @@ static uint8_t EventQueue_Pop(AppEvent_t *event)
 
 static void App_HandleEvent(AppEvent_t event)
 {
-	AppDiagnostics_RecordEvent(event);
+	APP_DIAG_RECORD_EVENT(event);
 	LOG_I("t=%u event=%s state=%s", s_system_tick_ms,
 	      App_EventName(event), App_StateName(s_app.state));
 
@@ -4083,7 +4111,9 @@ int main(void)
 	pin_reset = (RCC_GetFlagStatus(RCC_FLAG_PINRST) != RESET) ? 1U : 0U;
 	low_power_reset = (RCC_GetFlagStatus(RCC_FLAG_LPWRRST) != RESET) ? 1U : 0U;
 	Board_Init();
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 	AppDiagnostics_Init();
+#endif
 	App_Init();
 	LOG_I("t=%u reset flags iwdg=%u bor=%u por=%u pin=%u lpwr=%u",
 	      s_system_tick_ms, watchdog_reset, brownout_reset, power_on_reset,
@@ -4092,7 +4122,9 @@ int main(void)
 	{
 		LOG_W("t=%u reset cause=IWDG", s_system_tick_ms);
 	}
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
 	AppDiagnostics_LogPrevious(watchdog_reset);
+#endif
 	RCC_ClrFlag();
 
 #if (APP_IWDG_ENABLE != 0U)
@@ -4117,9 +4149,9 @@ int main(void)
 		    (control_cycle_completed != 0U))
 		{
 			/* Feed only after the complete 10 ms control chain has returned. */
-			AppDiagnostics_SetStage(APP_DIAG_STAGE_WATCHDOG_FEED);
+			APP_DIAG_SET_STAGE(APP_DIAG_STAGE_WATCHDOG_FEED);
 			IWDG_ReloadKey();
-			AppDiagnostics_SetStage(APP_DIAG_STAGE_WFI);
+			APP_DIAG_SET_STAGE(APP_DIAG_STAGE_WFI);
 		}
 
 		/* 等待下一次中断，避免空转占满 CPU */
