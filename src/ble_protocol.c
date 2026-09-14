@@ -434,26 +434,22 @@ void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
 	                              data, (uint8_t)sizeof(data));
 }
 
-void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile)
-{
-	uint8_t data[2];
-
-	data[0] = channel;
-	data[1] = profile;
-	BleProtocol_QueueNotification(BLE_COMMAND_THERAPY_START_NOTIFY,
-	                              data, (uint8_t)sizeof(data));
-}
-
-void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds,
+void BleProtocol_NotifyTherapyEnd(uint8_t end_type,
+                                  uint8_t channel_mask,
+                                  uint8_t pulse_mode,
+                                  uint16_t duration_seconds,
                                   uint8_t ch1_level,
                                   uint8_t ch2_level)
 {
-	uint8_t data[4];
+	uint8_t data[7];
 
-	data[0] = (uint8_t)(duration_seconds & 0xFFU);
-	data[1] = (uint8_t)(duration_seconds >> 8U);
-	data[2] = ch1_level;
-	data[3] = ch2_level;
+	data[0] = end_type;
+	data[1] = channel_mask;
+	data[2] = pulse_mode;
+	data[3] = (uint8_t)(duration_seconds & 0xFFU);
+	data[4] = (uint8_t)(duration_seconds >> 8U);
+	data[5] = ch1_level;
+	data[6] = ch2_level;
 	BleProtocol_QueueNotification(BLE_COMMAND_THERAPY_END_NOTIFY,
 	                              data, (uint8_t)sizeof(data));
 }

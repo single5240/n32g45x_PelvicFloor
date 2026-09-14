@@ -13,7 +13,6 @@ extern "C" {
 #define BLE_COMMAND_UI_ACTION         0x10U
 #define BLE_COMMAND_STATUS_NOTIFY     0x91U
 #define BLE_COMMAND_PRESSURE_RESULT_NOTIFY 0x92U
-#define BLE_COMMAND_THERAPY_START_NOTIFY 0x93U
 #define BLE_COMMAND_THERAPY_END_NOTIFY 0x94U
 
 typedef enum
@@ -65,8 +64,10 @@ void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_NotifyStatus(uint32_t now_ms);
 void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
                                       uint16_t pressure_max);
-void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile);
-void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds,
+void BleProtocol_NotifyTherapyEnd(uint8_t end_type,
+                                  uint8_t channel_mask,
+                                  uint8_t pulse_mode,
+                                  uint16_t duration_seconds,
                                   uint8_t ch1_level,
                                   uint8_t ch2_level);
 void BleProtocol_SetRemoteDangerActive(uint8_t active);

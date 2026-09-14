@@ -195,13 +195,12 @@ int main(void)
 	BleProtocol_NotifyStatus(50U);
 	AssertStatusNotification();
 	{
-		const uint8_t therapy_start[] = {2U, 1U};
-		const uint8_t therapy_end[] = {0x34U, 0x12U};
+		const uint8_t therapy_end[] =
+		{
+			1U, 0x03U, 2U, 0x34U, 0x12U, 20U, 30U
+		};
 
-		BleProtocol_NotifyTherapyStart(therapy_start[0], therapy_start[1]);
-		AssertTherapyNotification(BLE_COMMAND_THERAPY_START_NOTIFY,
-		                          therapy_start, (uint8_t)sizeof(therapy_start));
-		BleProtocol_NotifyTherapyEnd(0x1234U);
+		BleProtocol_NotifyTherapyEnd(1U, 0x03U, 2U, 0x1234U, 20U, 30U);
 		AssertTherapyNotification(BLE_COMMAND_THERAPY_END_NOTIFY,
 		                          therapy_end, (uint8_t)sizeof(therapy_end));
 	}

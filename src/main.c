@@ -479,10 +479,20 @@ typedef struct
 typedef struct
 {
 	uint8_t active;
-	uint16_t elapsed_seconds;
+	uint8_t output_active;
+	uint8_t channel_mask;
+	uint8_t pulse_mode;
+	uint32_t active_start_ms;
+	uint32_t accumulated_active_ms;
 	uint8_t end_level_ch1;
 	uint8_t end_level_ch2;
 } TherapySessionContext_t;
+
+typedef enum
+{
+	THERAPY_END_BY_COUNTDOWN = 0U,
+	THERAPY_END_BY_ACTIVE_STOP = 1U
+} TherapyEndType_t;
 
 typedef struct
 {
@@ -537,7 +547,8 @@ static void Core_ApplyErrataWorkarounds(void);
 static void Board_EnterSafeState(void);
 static void Treatment_StopOutputs(void);
 static void Treatment_CancelSession(void);
-static void Treatment_CompleteSession(void);
+static void Treatment_PauseSession(uint32_t now_ms);
+static void Treatment_CompleteSession(TherapyEndType_t end_type);
 static void Pressure_StopOutputs(void);
 static void Pressure_ApplyOutputs(void);
 static void Pressure_ResetProcess(void);
@@ -1066,6 +1077,7 @@ static void Treatment_StopOutputs(void)
 	/* Snapshot both UI levels before the unified shutdown clears them. */
 	if (s_therapy_session.active != 0U)
 	{
+		Treatment_PauseSession(s_system_tick_ms);
 		s_therapy_session.end_level_ch1 = s_ui.power_ch1;
 		s_therapy_session.end_level_ch2 = s_ui.power_ch2;
 	}
@@ -1100,18 +1112,78 @@ static void Treatment_StopOutputs(void)
 static void Treatment_CancelSession(void)
 {
 	s_therapy_session.active = 0U;
-	s_therapy_session.elapsed_seconds = 0U;
+	s_therapy_session.output_active = 0U;
+	s_therapy_session.channel_mask = 0U;
+	s_therapy_session.pulse_mode = 0U;
+	s_therapy_session.active_start_ms = 0U;
+	s_therapy_session.accumulated_active_ms = 0U;
 	s_therapy_session.end_level_ch1 = 0U;
 	s_therapy_session.end_level_ch2 = 0U;
 }
 
-static void Treatment_CompleteSession(void)
+static void Treatment_PauseSession(uint32_t now_ms)
 {
-	if ((s_therapy_session.active != 0U) &&
-	    (s_ble_name.protocol_active != 0U) &&
+	uint32_t active_interval_ms;
+
+	if ((s_therapy_session.active == 0U) ||
+	    (s_therapy_session.output_active == 0U))
+	{
+		return;
+	}
+
+	active_interval_ms = now_ms - s_therapy_session.active_start_ms;
+	if ((0xFFFFFFFFUL - s_therapy_session.accumulated_active_ms) <
+	    active_interval_ms)
+	{
+		s_therapy_session.accumulated_active_ms = 0xFFFFFFFFUL;
+	}
+	else
+	{
+		s_therapy_session.accumulated_active_ms += active_interval_ms;
+	}
+	s_therapy_session.output_active = 0U;
+}
+
+static void Treatment_CompleteSession(TherapyEndType_t end_type)
+{
+	uint32_t duration_seconds;
+	uint16_t reported_duration_seconds;
+
+	if (s_therapy_session.active == 0U)
+	{
+		return;
+	}
+
+	if (end_type == THERAPY_END_BY_COUNTDOWN)
+	{
+		duration_seconds = (uint32_t)s_ui.set_minutes * 60U;
+	}
+	else
+	{
+		if (s_therapy_session.accumulated_active_ms < 600000UL)
+		{
+			Treatment_CancelSession();
+			return;
+		}
+		duration_seconds = s_therapy_session.accumulated_active_ms / 1000U;
+	}
+
+	if (duration_seconds > 0xFFFFU)
+	{
+		reported_duration_seconds = 0xFFFFU;
+	}
+	else
+	{
+		reported_duration_seconds = (uint16_t)duration_seconds;
+	}
+
+	if ((s_ble_name.protocol_active != 0U) &&
 	    (s_ble_sta.stable_connected != 0U))
 	{
-		BleProtocol_NotifyTherapyEnd(s_therapy_session.elapsed_seconds,
+		BleProtocol_NotifyTherapyEnd((uint8_t)end_type,
+		                             s_therapy_session.channel_mask,
+		                             (uint8_t)(s_therapy_session.pulse_mode + 1U),
+		                             reported_duration_seconds,
 		                             s_therapy_session.end_level_ch1,
 		                             s_therapy_session.end_level_ch2);
 	}
@@ -1441,7 +1513,7 @@ static void App_StateExit(AppState_t state)
 	{
 		case APP_STATE_THERAPY:
 			Treatment_StopOutputs();
-			Treatment_CompleteSession();
+			Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 			break;
 
 		case APP_STATE_PRESSURE:
@@ -1900,7 +1972,7 @@ static void App_HandleEvent(AppEvent_t event)
 				uint8_t next_formula = (uint8_t)((s_ui.formula + 1U) %
 				                                 TREATMENT_PULSE_MODE_COUNT);
 				Treatment_StopOutputs();
-				Treatment_CompleteSession();
+				Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 				s_ui.formula = next_formula;
 				TreatmentPulse_SetMode(next_formula);
 				LOG_I("t=%u formula=P%u, power reset", s_system_tick_ms,
@@ -3133,7 +3205,7 @@ static void Ui_Countdown1s(void)
 	    (s_ui.remaining_seconds == 0U))
 	{
 		Treatment_StopOutputs();
-		Treatment_CompleteSession();
+		Treatment_CompleteSession(THERAPY_END_BY_COUNTDOWN);
 		LOG_W("t=%u therapy stopped: zero remaining time", s_system_tick_ms);
 		Ui_RecordActivity();
 		s_app.ui_dirty = 1U;
@@ -3150,17 +3222,11 @@ static void Ui_Countdown1s(void)
 		s_ui.remaining_seconds--;
 	}
 
-	if ((s_therapy_session.active != 0U) &&
-	    (s_therapy_session.elapsed_seconds < 0xFFFFU))
-	{
-		s_therapy_session.elapsed_seconds++;
-	}
-
 	if ((s_ui.remaining_minutes == 0U) &&
 	    (s_ui.remaining_seconds == 0U))
 	{
 		Treatment_StopOutputs();
-		Treatment_CompleteSession();
+		Treatment_CompleteSession(THERAPY_END_BY_COUNTDOWN);
 		LOG_I("t=%u therapy completed, time=0 power=0/0", s_system_tick_ms);
 		Ui_RecordActivity();
 		s_app.ui_dirty = 1U;
@@ -3470,7 +3536,7 @@ static void BleProtocol_TxTask(void)
 static void BleProtocol_StopAll(void)
 {
 	Treatment_StopOutputs();
-	Treatment_CompleteSession();
+	Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 	Pressure_StopOutputs();
 	s_ble_pending_remote_danger = 0U;
 	s_ble_remote_danger_active = 0U;
@@ -3607,7 +3673,7 @@ static void BleProtocol_LinkState(uint8_t connected)
 static void BleProtocol_RemoteDangerTimeout(void)
 {
 	Treatment_StopOutputs();
-	Treatment_CompleteSession();
+	Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 	Pressure_StopOutputs();
 	s_ble_pending_remote_danger = 0U;
 	s_ble_remote_danger_active = 0U;
@@ -3919,7 +3985,7 @@ static void Control_Task10ms(void)
 	uint8_t output_allowed;
 	uint8_t requested_pwr1;
 	uint8_t requested_pwr2;
-	uint8_t therapy_start_channel;
+	uint8_t active_channel_mask;
 
 	Ui_BuzzerTask10ms();
 
@@ -3970,16 +4036,28 @@ static void Control_Task10ms(void)
 	if ((s_therapy_session.active == 0U) &&
 	    ((Pwr1 != 0U) || (Pwr2 != 0U)))
 	{
-		therapy_start_channel = ((Pwr1 != 0U) && (Pwr2 != 0U)) ? 2U :
-		                        ((Pwr1 != 0U) ? 0U : 1U);
 		s_therapy_session.active = 1U;
-		s_therapy_session.elapsed_seconds = 0U;
+		s_therapy_session.output_active = 1U;
+		s_therapy_session.channel_mask = 0U;
+		s_therapy_session.pulse_mode = s_ui.formula;
+		s_therapy_session.active_start_ms = s_system_tick_ms;
+		s_therapy_session.accumulated_active_ms = 0U;
 		s_therapy_session.end_level_ch1 = 0U;
 		s_therapy_session.end_level_ch2 = 0U;
-		if ((s_ble_name.protocol_active != 0U) &&
-		    (s_ble_sta.stable_connected != 0U))
+	}
+
+	if (s_therapy_session.active != 0U)
+	{
+		active_channel_mask = ((Pwr1 != 0U) ? 0x01U : 0U) |
+		                      ((Pwr2 != 0U) ? 0x02U : 0U);
+		if (active_channel_mask != 0U)
 		{
-			BleProtocol_NotifyTherapyStart(therapy_start_channel, s_ui.formula);
+			s_therapy_session.channel_mask |= active_channel_mask;
+			if (s_therapy_session.output_active == 0U)
+			{
+				s_therapy_session.output_active = 1U;
+				s_therapy_session.active_start_ms = s_system_tick_ms;
+			}
 		}
 	}
 
