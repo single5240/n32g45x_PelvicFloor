@@ -422,17 +422,14 @@ void BleProtocol_NotifyStatus(uint32_t now_ms)
 }
 
 void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
-                                      uint16_t pressure_max,
-                                      uint16_t pressure_average)
+                                      uint16_t pressure_max)
 {
-	uint8_t data[6];
+	uint8_t data[4];
 
 	data[0] = (uint8_t)(duration_seconds & 0xFFU);
 	data[1] = (uint8_t)(duration_seconds >> 8U);
 	data[2] = (uint8_t)(pressure_max & 0xFFU);
 	data[3] = (uint8_t)(pressure_max >> 8U);
-	data[4] = (uint8_t)(pressure_average & 0xFFU);
-	data[5] = (uint8_t)(pressure_average >> 8U);
 	BleProtocol_QueueNotification(BLE_COMMAND_PRESSURE_RESULT_NOTIFY,
 	                              data, (uint8_t)sizeof(data));
 }
@@ -447,12 +444,16 @@ void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile)
 	                              data, (uint8_t)sizeof(data));
 }
 
-void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds)
+void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds,
+                                  uint8_t ch1_level,
+                                  uint8_t ch2_level)
 {
-	uint8_t data[2];
+	uint8_t data[4];
 
 	data[0] = (uint8_t)(duration_seconds & 0xFFU);
 	data[1] = (uint8_t)(duration_seconds >> 8U);
+	data[2] = ch1_level;
+	data[3] = ch2_level;
 	BleProtocol_QueueNotification(BLE_COMMAND_THERAPY_END_NOTIFY,
 	                              data, (uint8_t)sizeof(data));
 }

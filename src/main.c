@@ -268,7 +268,6 @@ typedef enum
 {
 	PRESSURE_PROCESS_IDLE = 0,
 	PRESSURE_PROCESS_INFLATING,
-	PRESSURE_PROCESS_WAIT_CHANGE,
 	PRESSURE_PROCESS_TESTING,
 	PRESSURE_PROCESS_RESULT,
 	PRESSURE_PROCESS_DEFLATING
@@ -287,7 +286,7 @@ typedef enum
 #define UI_BEEP_GAP_MS             80U
 #define PRESSURE_DEFLATE_TIME_MS    3000U
 #define PRESSURE_INFLATE_TIMEOUT_MS (PRESSURE_INFLATE_TIMEOUT_S * 1000UL)
-#define PRESSURE_TEST_TIMEOUT_MS    (PRESSURE_TEST_TIMEOUT_S * 1000UL)
+#define PRESSURE_TEST_DURATION_MS   (PRESSURE_TEST_DURATION_S * 1000UL)
 
 #define BLE_RX_BUFFER_SIZE          512U
 #define BLE_RX_PROCESS_BUDGET_BYTES 128U
@@ -374,8 +373,8 @@ typedef struct
 	uint8_t charger_full;
 	uint8_t charge_frame;
 	uint8_t ble_connected;          /* 未连接常亮，连接后闪�? */
-	uint16_t pressure_value;        /* 已换算的显示值，硬限制为 0～150 mmHg */
-	uint8_t pressure_value_blink;   /* Blink live pressure while waiting/testing. */
+	uint16_t pressure_value;        /* 已换算的显示值，硬限制为 0～110 mmHg */
+	uint8_t pressure_value_blink;   /* Blink live pressure while testing. */
 	PressureAction_t pressure_action;
 	uint32_t pressure_action_ms;
 	uint8_t buzzer_initialized;
@@ -475,16 +474,15 @@ typedef struct
 {
 	uint8_t active;
 	uint16_t elapsed_seconds;
+	uint8_t end_level_ch1;
+	uint8_t end_level_ch2;
 } TherapySessionContext_t;
 
 typedef struct
 {
 	PressureProcessState_t state;
-	uint16_t baseline_mmhg;
-	uint32_t sample_sum;
-	uint16_t sample_count;
-	uint16_t average_mmhg;
 	uint16_t maximum_mmhg;
+	uint16_t duration_seconds;
 	uint32_t test_start_ms;
 } PressureProcessContext_t;
 
@@ -537,10 +535,10 @@ static void Pressure_ApplyOutputs(void);
 static void Pressure_ResetProcess(void);
 static void Pressure_StartInflating(void);
 static void Pressure_StartDeflating(void);
-static void Pressure_EnterWaitChange(uint16_t pressure_mmhg);
 static void Pressure_StartTest(uint16_t first_sample_mmhg);
+static uint8_t Pressure_TestDurationReached(void);
 static void Pressure_EndTest(const char *reason);
-static void Pressure_AbortInflation(const char *reason);
+static void Pressure_AbortProcess(const char *reason);
 static void App_Init(void);
 static uint8_t App_RunOnce(void);
 static void App_RequestState(AppState_t next_state);
@@ -1037,6 +1035,13 @@ static void Board_EnterSafeState(void)
 
 static void Treatment_StopOutputs(void)
 {
+	/* Snapshot both UI levels before the unified shutdown clears them. */
+	if (s_therapy_session.active != 0U)
+	{
+		s_therapy_session.end_level_ch1 = s_ui.power_ch1;
+		s_therapy_session.end_level_ch2 = s_ui.power_ch2;
+	}
+
 	/* UI 目标值和遗留波形中断读取的档位同时归零�? */
 	s_ui.power_ch1 = 0U;
 	s_ui.power_ch2 = 0U;
@@ -1068,6 +1073,8 @@ static void Treatment_CancelSession(void)
 {
 	s_therapy_session.active = 0U;
 	s_therapy_session.elapsed_seconds = 0U;
+	s_therapy_session.end_level_ch1 = 0U;
+	s_therapy_session.end_level_ch2 = 0U;
 }
 
 static void Treatment_CompleteSession(void)
@@ -1076,7 +1083,9 @@ static void Treatment_CompleteSession(void)
 	    (s_ble_name.protocol_active != 0U) &&
 	    (s_ble_sta.stable_connected != 0U))
 	{
-		BleProtocol_NotifyTherapyEnd(s_therapy_session.elapsed_seconds);
+		BleProtocol_NotifyTherapyEnd(s_therapy_session.elapsed_seconds,
+		                             s_therapy_session.end_level_ch1,
+		                             s_therapy_session.end_level_ch2);
 	}
 	Treatment_CancelSession();
 }
@@ -1084,11 +1093,8 @@ static void Treatment_CompleteSession(void)
 static void Pressure_ResetProcess(void)
 {
 	s_pressure_process.state = PRESSURE_PROCESS_IDLE;
-	s_pressure_process.baseline_mmhg = 0U;
-	s_pressure_process.sample_sum = 0U;
-	s_pressure_process.sample_count = 0U;
-	s_pressure_process.average_mmhg = 0U;
 	s_pressure_process.maximum_mmhg = 0U;
+	s_pressure_process.duration_seconds = 0U;
 	s_pressure_process.test_start_ms = 0U;
 	s_ui.pressure_value_blink = 0U;
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
@@ -1120,31 +1126,24 @@ static void Pressure_StartDeflating(void)
 	LOG_I("t=%u pressure process=DEFLATING", s_system_tick_ms);
 }
 
-static void Pressure_EnterWaitChange(uint16_t pressure_mmhg)
-{
-	s_pressure_process.state = PRESSURE_PROCESS_WAIT_CHANGE;
-	s_pressure_process.baseline_mmhg = pressure_mmhg;
-	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
-	s_ui.pressure_action_ms = 0U;
-	s_ui.pressure_value_blink = 1U;
-	Pressure_ApplyOutputs();
-	s_app.ui_dirty = 1U;
-	LOG_I("t=%u pressure process=WAIT_CHANGE baseline=%u mmHg",
-	      s_system_tick_ms, pressure_mmhg);
-}
-
 static void Pressure_StartTest(uint16_t first_sample_mmhg)
 {
 	s_pressure_process.state = PRESSURE_PROCESS_TESTING;
-	s_pressure_process.sample_sum = first_sample_mmhg;
-	s_pressure_process.sample_count = 1U;
-	s_pressure_process.average_mmhg = 0U;
 	s_pressure_process.maximum_mmhg = first_sample_mmhg;
 	s_pressure_process.test_start_ms = s_system_tick_ms;
+	s_ui.pressure_action = PRESSURE_ACTION_INFLATING;
+	s_ui.pressure_action_ms = PRESSURE_TEST_DURATION_MS;
 	s_ui.pressure_value_blink = 1U;
 	s_app.ui_dirty = 1U;
-	LOG_I("t=%u pressure process=TESTING first=%u mmHg timeout=%u s",
-	      s_system_tick_ms, first_sample_mmhg, PRESSURE_TEST_TIMEOUT_S);
+	LOG_I("t=%u pressure process=TESTING first=%u mmHg duration=%u s",
+	      s_system_tick_ms, first_sample_mmhg, PRESSURE_TEST_DURATION_S);
+}
+
+static uint8_t Pressure_TestDurationReached(void)
+{
+	return ((uint32_t)(s_system_tick_ms -
+	                   s_pressure_process.test_start_ms) >=
+	        PRESSURE_TEST_DURATION_MS) ? 1U : 0U;
 }
 
 static void Pressure_EndTest(const char *reason)
@@ -1159,57 +1158,40 @@ static void Pressure_EndTest(const char *reason)
 
 	elapsed_ms = (uint32_t)(s_system_tick_ms -
 	                         s_pressure_process.test_start_ms);
-	if (s_pressure_process.sample_count != 0U)
-	{
-		s_pressure_process.average_mmhg =
-			(uint16_t)((s_pressure_process.sample_sum +
-			            (s_pressure_process.sample_count / 2U)) /
-			           s_pressure_process.sample_count);
-	}
-	else
-	{
-		s_pressure_process.average_mmhg = 0U;
-	}
-
 	s_pressure_process.state = PRESSURE_PROCESS_RESULT;
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 	s_ui.pressure_action_ms = 0U;
 	s_ui.pressure_value_blink = 0U;
-	s_ui.pressure_value = s_pressure_process.average_mmhg;
+	s_ui.pressure_value = s_pressure_process.maximum_mmhg;
 	s_app.ui_dirty = 1U;
 	elapsed_seconds = elapsed_ms / 1000U;
 	if (elapsed_seconds > 65535U)
 	{
 		elapsed_seconds = 65535U;
 	}
-	if ((s_pressure_process.sample_count != 0U) &&
-	    (s_ble_name.protocol_active != 0U) &&
+	s_pressure_process.duration_seconds = (uint16_t)elapsed_seconds;
+	if ((s_ble_name.protocol_active != 0U) &&
 	    (s_ble_sta.stable_connected != 0U))
 	{
-		BleProtocol_NotifyPressureResult((uint16_t)elapsed_seconds,
-		                                 s_pressure_process.maximum_mmhg,
-		                                 s_pressure_process.average_mmhg);
+		BleProtocol_NotifyPressureResult(s_pressure_process.duration_seconds,
+		                                 s_pressure_process.maximum_mmhg);
 	}
-	LOG_I("t=%u pressure test end reason=%s duration=%u ms samples=%u average=%u max=%u mmHg",
+	LOG_I("t=%u pressure test end reason=%s duration=%u ms max=%u mmHg",
 	      s_system_tick_ms, reason, elapsed_ms,
-	      s_pressure_process.sample_count,
-	      s_pressure_process.average_mmhg,
 	      s_pressure_process.maximum_mmhg);
 }
 
-static void Pressure_AbortInflation(const char *reason)
+static void Pressure_AbortProcess(const char *reason)
 {
-	if (s_pressure_process.state != PRESSURE_PROCESS_INFLATING)
+	if ((s_pressure_process.state != PRESSURE_PROCESS_INFLATING) &&
+	    (s_pressure_process.state != PRESSURE_PROCESS_TESTING))
 	{
 		return;
 	}
-	s_pressure_process.state = PRESSURE_PROCESS_IDLE;
-	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
-	s_ui.pressure_action_ms = 0U;
-	s_ui.pressure_value_blink = 0U;
+	Pressure_ResetProcess();
 	Pressure_ApplyOutputs();
 	s_app.ui_dirty = 1U;
-	LOG_W("t=%u inflation aborted, reason=%s", s_system_tick_ms, reason);
+	LOG_W("t=%u pressure process aborted, reason=%s", s_system_tick_ms, reason);
 }
 
 static void Pressure_StopOutputs(void)
@@ -1901,11 +1883,18 @@ static void App_HandleEvent(AppEvent_t event)
 			{
 				if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
 				{
-					Pressure_EndTest("manual");
+					if (Pressure_TestDurationReached() != 0U)
+					{
+						Pressure_EndTest("completed");
+					}
+					else
+					{
+						Pressure_AbortProcess("manual");
+					}
 				}
 				else if (s_pressure_process.state == PRESSURE_PROCESS_INFLATING)
 				{
-					Pressure_AbortInflation("manual");
+					Pressure_AbortProcess("manual");
 				}
 				else if (s_pressure_process.state != PRESSURE_PROCESS_IDLE)
 				{
@@ -1994,7 +1983,14 @@ static void App_HandleEvent(AppEvent_t event)
 			    (s_pressure_process.state == PRESSURE_PROCESS_TESTING))
 			{
 				Ui_Beep(1U);
-				Pressure_EndTest("remote");
+				if (Pressure_TestDurationReached() != 0U)
+				{
+					Pressure_EndTest("completed");
+				}
+				else
+				{
+					Pressure_AbortProcess("remote");
+				}
 			}
 			break;
 
@@ -2329,7 +2325,6 @@ void AppUi_SetPressureResult(uint16_t value)
 	s_ui.pressure_value = result;
 	s_pressure_adc_value_valid = 1U;
 	s_pressure_process.state = PRESSURE_PROCESS_RESULT;
-	s_pressure_process.average_mmhg = result;
 	s_pressure_process.maximum_mmhg = result;
 	Pressure_ApplyOutputs();
 	s_app.ui_dirty = 1U;
@@ -2345,11 +2340,11 @@ void AppUi_InflationCompleted(void)
 		    (s_ui.pressure_value >= PRESSURE_TEST_SETPOINT_MMHG) &&
 		    (s_ui.pressure_value < PRESSURE_MAX_MMHG))
 		{
-			Pressure_EnterWaitChange(s_ui.pressure_value);
+			Pressure_StartTest(s_ui.pressure_value);
 		}
 		else
 		{
-			Pressure_AbortInflation("completion below setpoint");
+			Pressure_AbortProcess("completion below setpoint");
 		}
 	}
 }
@@ -2859,56 +2854,24 @@ static uint8_t Pressure_ReadFilteredAdc(uint16_t *adc_value)
 static void Pressure_UpdateLiveValue(uint16_t adc_value)
 {
 	uint16_t pressure_mmhg = Pressure_CalculateMmHg(adc_value, NULL, NULL);
-	uint16_t pressure_change;
 	uint8_t update_live_display = 1U;
 	s_pressure_adc_value_valid = 1U;
 
 	/* The hard limit always takes priority over the normal setpoint. */
 	if ((pressure_mmhg >= PRESSURE_MAX_MMHG) &&
-	    (s_ui.pressure_action == PRESSURE_ACTION_INFLATING))
+	    ((s_pressure_process.state == PRESSURE_PROCESS_INFLATING) ||
+	     (s_pressure_process.state == PRESSURE_PROCESS_TESTING)))
 	{
-		if (s_pressure_process.state == PRESSURE_PROCESS_INFLATING)
-		{
-			Pressure_AbortInflation("maximum pressure");
-		}
-		else
-		{
-			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
-			s_ui.pressure_action_ms = 0U;
-			Pressure_ApplyOutputs();
-			s_app.ui_dirty = 1U;
-			LOG_W("t=%u inflation output stopped at maximum pressure",
-			      s_system_tick_ms);
-		}
+		Pressure_AbortProcess("maximum pressure");
 	}
 	else if ((pressure_mmhg >= PRESSURE_TEST_SETPOINT_MMHG) &&
 	         (s_pressure_process.state == PRESSURE_PROCESS_INFLATING))
 	{
-		Pressure_EnterWaitChange(pressure_mmhg);
+		Pressure_StartTest(pressure_mmhg);
 	}
 
-	if (s_pressure_process.state == PRESSURE_PROCESS_WAIT_CHANGE)
+	if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
 	{
-		if (pressure_mmhg >= s_pressure_process.baseline_mmhg)
-		{
-			pressure_change = (uint16_t)(pressure_mmhg -
-			                             s_pressure_process.baseline_mmhg);
-		}
-		else
-		{
-			pressure_change = (uint16_t)(s_pressure_process.baseline_mmhg -
-			                             pressure_mmhg);
-		}
-		if (pressure_change >= PRESSURE_CHANGE_THRESHOLD_MMHG)
-		{
-			Pressure_StartTest(pressure_mmhg);
-		}
-	}
-	else if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
-	{
-		/* The configured 180 s window has fewer than 1000 samples at 200 ms. */
-		s_pressure_process.sample_sum += pressure_mmhg;
-		s_pressure_process.sample_count++;
 		if (pressure_mmhg > s_pressure_process.maximum_mmhg)
 		{
 			s_pressure_process.maximum_mmhg = pressure_mmhg;
@@ -2967,7 +2930,7 @@ static void PressureAdc_Task100ms(void)
 		if (ADC2_Initial() == 0U)
 		{
 			s_pressure_adc_value_valid = 0U;
-			Pressure_AbortInflation("ADC init failed");
+			Pressure_AbortProcess("ADC init failed");
 			LOG_E("t=%u pressure ADC2 init failed", now);
 			return;
 		}
@@ -3004,7 +2967,7 @@ static void PressureAdc_Task100ms(void)
 	if (Pressure_ReadFilteredAdc(&raw_value) == 0U)
 	{
 		s_pressure_adc_value_valid = 0U;
-		Pressure_AbortInflation("ADC read failed");
+		Pressure_AbortProcess("ADC read failed");
 		if (ADC_DisableSafe(ADC2) == 0U)
 		{
 			ADC_DeInit(ADC2);
@@ -3983,6 +3946,8 @@ static void Control_Task10ms(void)
 		                        ((Pwr1 != 0U) ? 0U : 1U);
 		s_therapy_session.active = 1U;
 		s_therapy_session.elapsed_seconds = 0U;
+		s_therapy_session.end_level_ch1 = 0U;
+		s_therapy_session.end_level_ch2 = 0U;
 		if ((s_ble_name.protocol_active != 0U) &&
 		    (s_ble_sta.stable_connected != 0U))
 		{
@@ -4017,10 +3982,9 @@ static void Control_Task10ms(void)
 
 	if ((s_app.state == APP_STATE_PRESSURE) &&
 	    (s_pressure_process.state == PRESSURE_PROCESS_TESTING) &&
-	    ((uint32_t)(s_system_tick_ms - s_pressure_process.test_start_ms) >=
-	     PRESSURE_TEST_TIMEOUT_MS))
+	    (Pressure_TestDurationReached() != 0U))
 	{
-		Pressure_EndTest("timeout");
+		Pressure_EndTest("completed");
 	}
 
 	if ((s_app.state == APP_STATE_PRESSURE) &&
@@ -4031,7 +3995,7 @@ static void Control_Task10ms(void)
 		{
 			if (s_ui.pressure_action == PRESSURE_ACTION_INFLATING)
 			{
-				Pressure_AbortInflation("timeout");
+				Pressure_AbortProcess("timeout");
 			}
 			else
 			{

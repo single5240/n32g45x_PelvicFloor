@@ -77,8 +77,8 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 ### 压力与电池
 
 - ADC1 用于电池电压及 PA6 外部参考采样；ADC2 用于 PA2 压力传感器采样。
-- 压力流程为“空闲→充气→等待变化→正式测试→结果保持→放气复位”：100 mmHg 停泵后以当时压力为基准，变化达到 1 mmHg 后统计，最长测试 180 s。
-- 连续充气最长 60 s；150 mmHg 为停泵上限。测试结果显示平均压力且不闪烁，放气流程结束后才允许开始下一轮充气。
+- 压力流程为“空闲→预充气→正式测试→结果保持→放气复位”：首次有效采样达到 5 mmHg 后开始固定 10 s 测试，测试期间气泵以 10 kHz、50% 占空比继续充气，压力值闪烁并显示实时值。
+- 预充气最长 60 s；110 mmHg 为最高优先级停泵和终止测试上限。仅完整运行 10 s 的测试保留最大压力并主动上报；提前停止、放气、ADC 异常或超压均丢弃本轮数据。
 - BATEN（PB2）在开机、工作和充电电池会话期间持续有效，关机或故障安全状态关闭，避免周期性通断干扰模拟前端。
 - 压力换算值、过压阈值和阀门有效电平尚待硬件确认；未确认前不得以显示数值作为医疗或安全依据。
 
@@ -96,9 +96,10 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 ### 蓝牙
 
 - USART2：115200、8N1、无硬件流控，PB4/PB5 使用第三重映射。
-- 协议说明见 `docs/蓝牙通讯协议V1.1.4.md`。
+- 协议说明见 `docs/蓝牙通讯协议V1.1.6.md`。
 - 远程关机、治疗和压力 UI 动作当前已开放，但治疗/压力危险动作仍要求状态合法、未处于充电互锁且 PB7 物理连接有效；断链会走统一停止路径。
-- `UI_ACTION=08` 仅在正式压力测试阶段停止测试；等待变化和正式测试阶段的状态快照 `flags.bit6=1`，测试结束且统计有效、BLE 仍连接时发送 `PRESSURE_RESULT_NOTIFY(0x92)`。
+- `THERAPY_END_NOTIFY(0x94)` 固定发送累计治疗时长和 CH1/CH2 结束强度；无强度通道发送 0，强度取统一关断清零前的 UI 档位。
+- `UI_ACTION=08` 仅在正式压力测试阶段停止测试，并将未满 10 s 的本轮结果判为无效；仅正式测试阶段的状态快照 `flags.bit6=1`，完整运行 10 s 且 BLE 仍连接时发送 `PRESSURE_RESULT_NOTIFY(0x92)`。
 - 远程开机不支持：关机状态下蓝牙模块已关闭。
 
 ## 5. 重要宏定义
@@ -112,11 +113,11 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 换向全关断死区，基于当前 128 MHz 时钟和定时器预分频 7；不可在未测关断时间前缩短。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | `1` 时强制两路 DAC 输出固定码值，仅限联调。 |
 | `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定 DAC 联调码值；受上限 3800 编译检查保护。 |
-| `PRESSURE_MAX_MMHG` | `150` | 最大压力停泵上限；测试中的被动压力达到该值不终止测试。 |
-| `PRESSURE_TEST_SETPOINT_MMHG` | `100` | 充气设定压力，达到后停泵并等待压力变化。 |
-| `PRESSURE_INFLATE_TIMEOUT_S` | `60` | 单次连续充气最长时间。 |
-| `PRESSURE_TEST_TIMEOUT_S` | `180` | 正式测试最长时间。 |
-| `PRESSURE_CHANGE_THRESHOLD_MMHG` | `1` | 相对设定点基准启动正式测试的最小变化量。 |
+| `MOTOR_PWM_TEST_DUTY_PERCENT` | `50` | 气泵 TIM4_CH4 联调占空比；PWM 频率保持 10 kHz。 |
+| `PRESSURE_MAX_MMHG` | `110` | 最大压力保护上限；预充气或测试中达到即停泵、终止测试并丢弃数据。 |
+| `PRESSURE_TEST_SETPOINT_MMHG` | `5` | 首次有效采样达到该值时开始固定时长测试，气泵继续运行。 |
+| `PRESSURE_INFLATE_TIMEOUT_S` | `60` | 达到测试起点前的最长连续预充气时间。 |
+| `PRESSURE_TEST_DURATION_S` | `10` | 正常有效测试的固定时长。 |
 | `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙 `POWER_LONG` 请求关机。 |
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |
@@ -136,5 +137,5 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 详细实现请阅读：
 
 - `docs/状态机原理与业务实现.md`
-- `docs/蓝牙通讯协议V1.1.4.md`
+- `docs/蓝牙通讯协议V1.1.6.md`
 - `AGENTS.md`

@@ -56,6 +56,11 @@ extern "C" {
 #define MOTOR_PWM_COMPARE_COUNTS     ((MOTOR_PWM_PERIOD_COUNTS * \
                                       MOTOR_PWM_TEST_DUTY_PERCENT) / 100U)
 
+#if (MOTOR_PWM_TEST_DUTY_PERCENT == 0U) || \
+    (MOTOR_PWM_TEST_DUTY_PERCENT > 100U)
+#error "MOTOR_PWM_TEST_DUTY_PERCENT must be within 1..100"
+#endif
+
 #define READ_PB_MAIN					GPIO_ReadInputDataBit(PB_MAIN_PORT,PB_MAIN_PIN)
 #define READ_PB_SS						GPIO_ReadInputDataBit(PB_SS_PORT,PB_SS_PIN)
 #define READ_PB_FUN						GPIO_ReadInputDataBit(PB_FUN_PORT,PB_FUN_PIN)

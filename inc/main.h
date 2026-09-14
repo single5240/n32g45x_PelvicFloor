@@ -175,11 +175,10 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 /* Pressure-test limits. Values are temporary until sensor and pneumatic
  * hardware calibration has been completed on the target board. */
-#define PRESSURE_MAX_MMHG                    150U
-#define PRESSURE_TEST_SETPOINT_MMHG          100U
+#define PRESSURE_MAX_MMHG                    110U
+#define PRESSURE_TEST_SETPOINT_MMHG            5U
 #define PRESSURE_INFLATE_TIMEOUT_S            60U
-#define PRESSURE_TEST_TIMEOUT_S              180U
-#define PRESSURE_CHANGE_THRESHOLD_MMHG         1U
+#define PRESSURE_TEST_DURATION_S              10U
 
 #if (TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE > 1U)
 #error "TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE must be 0 or 1"
@@ -205,9 +204,8 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 #endif
 
 #if (PRESSURE_INFLATE_TIMEOUT_S == 0U) || \
-    (PRESSURE_TEST_TIMEOUT_S == 0U) || \
-    (PRESSURE_CHANGE_THRESHOLD_MMHG == 0U)
-#error "Pressure timeouts and change threshold must be non-zero"
+    (PRESSURE_TEST_DURATION_S == 0U)
+#error "Pressure durations must be non-zero"
 #endif
 
 /* Remote actions use the local event/state-machine path. Dangerous output

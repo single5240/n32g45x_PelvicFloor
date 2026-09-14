@@ -64,10 +64,11 @@ void BleProtocol_Task(uint32_t now_ms);
 void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_NotifyStatus(uint32_t now_ms);
 void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
-                                      uint16_t pressure_max,
-                                      uint16_t pressure_average);
+                                      uint16_t pressure_max);
 void BleProtocol_NotifyTherapyStart(uint8_t channel, uint8_t profile);
-void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds);
+void BleProtocol_NotifyTherapyEnd(uint16_t duration_seconds,
+                                  uint8_t ch1_level,
+                                  uint8_t ch2_level);
 void BleProtocol_SetRemoteDangerActive(uint8_t active);
 uint8_t BleProtocol_ReadTxByte(uint8_t *data);
 uint8_t BleProtocol_HasTxData(void);
