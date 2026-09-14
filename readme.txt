@@ -110,6 +110,8 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | --- | ---: | --- |
 | `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 允许 TIM6/DAC 治疗幅值链路；DAC=0 是否等于高压安全归零需实测。 |
 | `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 允许 TIM1/TIM8 桥臂 PWM 输出；会实际驱动治疗桥臂。 |
+| `TREATMENT_PULSE_FREQUENCY_HZ` | `800` | 完整双相脉冲频率；每相槽为 625 us。 |
+| `TREATMENT_PULSE_WIDTH_US` | `300` | 单相桥臂导通目标宽度；由 CC4 比较事件关断。 |
 | `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 换向全关断死区，基于当前 128 MHz 时钟和定时器预分频 7；不可在未测关断时间前缩短。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | `1` 时强制两路 DAC 输出固定码值，仅限联调。 |
 | `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定 DAC 联调码值；受上限 3800 编译检查保护。 |

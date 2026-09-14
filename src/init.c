@@ -196,7 +196,7 @@ void TIM1_Configuration(void)
     TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);
     TIM_InitOcStruct(&TIM_OCInitStructure);
     /* Time base configuration */
-	TIM_TimeBaseStructure.Period    = TREATMENT_TIMER_RELOAD_VALUE;////way1:2kHZ
+	TIM_TimeBaseStructure.Period    = TREATMENT_TIMER_RELOAD_VALUE;/* 800 Hz bipolar / 1600 Hz phase */
     TIM_TimeBaseStructure.Prescaler = 7;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_DOWN;
@@ -207,7 +207,7 @@ void TIM1_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = 7800;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -219,7 +219,7 @@ void TIM1_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = 7800;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -227,16 +227,19 @@ void TIM1_Configuration(void)
 
     TIM_InitOc2(TIM1, &TIM_OCInitStructure);
 
-    /* CH3 is internal timing only: its compare interrupt ends bridge deadtime. */
+    /* CH3 starts the pulse after bridge deadtime; CH4 ends the 300 us pulse. */
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
     TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
     TIM_InitOc3(TIM1, &TIM_OCInitStructure);
 
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PULSE_END_COMPARE;
+    TIM_InitOc4(TIM1, &TIM_OCInitStructure);
+
 	/* The application enables the counter and interrupts only while CH1 is active. */
 	TIM_EnableCtrlPwmOutputs(TIM1, ENABLE);
-	TIM_ConfigInt(TIM1, TIM_INT_UPDATE | TIM_INT_CC3, DISABLE);
+	TIM_ConfigInt(TIM1, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4, DISABLE);
 	TIM_Enable(TIM1, DISABLE);
     
 }
@@ -251,7 +254,7 @@ void TIM8_Configuration(void)
     TIM_InitTimBaseStruct(&TIM_TimeBaseStructure);
     TIM_InitOcStruct(&TIM_OCInitStructure);
     /* Time base configuration */
-    TIM_TimeBaseStructure.Period    = TREATMENT_TIMER_RELOAD_VALUE;////way2:2kHZ
+    TIM_TimeBaseStructure.Period    = TREATMENT_TIMER_RELOAD_VALUE;/* 800 Hz bipolar / 1600 Hz phase */
     TIM_TimeBaseStructure.Prescaler = 7;
     TIM_TimeBaseStructure.ClkDiv    = 0;
     TIM_TimeBaseStructure.CntMode   = TIM_CNT_MODE_DOWN;
@@ -263,7 +266,7 @@ void TIM8_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///占空�?=Pulse/Period
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;///占空�?=Pulse/Period
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -275,7 +278,7 @@ void TIM8_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = 7800;///占空�?=Pulse/Period
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;///占空�?=Pulse/Period
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -283,15 +286,18 @@ void TIM8_Configuration(void)
 
     TIM_InitOc2(TIM8, &TIM_OCInitStructure);
 
-    /* CH3 is internal timing only: its compare interrupt ends bridge deadtime. */
+    /* CH3 starts the pulse after bridge deadtime; CH4 ends the 300 us pulse. */
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
     TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
     TIM_InitOc3(TIM8, &TIM_OCInitStructure);
 
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PULSE_END_COMPARE;
+    TIM_InitOc4(TIM8, &TIM_OCInitStructure);
+
     /* The application enables the counter and interrupts only while CH2 is active. */
-    TIM_ConfigInt(TIM8, TIM_INT_UPDATE | TIM_INT_CC3, DISABLE);
+    TIM_ConfigInt(TIM8, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4, DISABLE);
     TIM_Enable(TIM8, DISABLE);
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
 }

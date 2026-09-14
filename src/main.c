@@ -1052,11 +1052,11 @@ static void Treatment_StopOutputs(void)
 	TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 0U);
 	TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 0U);
 
-	/* Keep the initial pulse scheme's compare value ready for the next treatment. */
-	TIM_SetCmp1(TIM1, 7800U);
-	TIM_SetCmp2(TIM1, 7800U);
-	TIM_SetCmp1(TIM8, 7800U);
-	TIM_SetCmp2(TIM8, 7800U);
+	/* Keep the gated 300 us pulse scheme ready for the next treatment. */
+	TIM_SetCmp1(TIM1, TREATMENT_BRIDGE_PWM_COMPARE);
+	TIM_SetCmp2(TIM1, TREATMENT_BRIDGE_PWM_COMPARE);
+	TIM_SetCmp1(TIM8, TREATMENT_BRIDGE_PWM_COMPARE);
+	TIM_SetCmp2(TIM8, TREATMENT_BRIDGE_PWM_COMPARE);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_1, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpCh(TIM1, TIM_CH_2, TIM_CAP_CMP_DISABLE);
 	TIM_EnableCapCmpChN(TIM1, TIM_CH_1, TIM_CAP_CMP_N_DISABLE);

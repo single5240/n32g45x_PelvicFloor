@@ -376,6 +376,7 @@ void TIM1_CC_IRQHandler(void)
 	if (TIM_GetIntStatus(TIM1, TIM_INT_CC3) != RESET)
 	{
 		uint8_t leg = s_treatment_ch1_pending_leg;
+		uint16_t pulse_end_compare;
 
 		g_diag_tim1_cc_count++;
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
@@ -383,7 +384,24 @@ void TIM1_CC_IRQHandler(void)
 		if ((Pwr1 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
 		{
 			TreatmentPulse_SelectCh1Leg(leg);
+			pulse_end_compare = TIM_GetCnt(TIM1);
+			if (pulse_end_compare > TREATMENT_PULSE_WIDTH_TICKS)
+			{
+				TIM_SetCmp4(TIM1, pulse_end_compare - TREATMENT_PULSE_WIDTH_TICKS);
+				TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
+				TIM_ConfigInt(TIM1, TIM_INT_CC4, ENABLE);
+			}
+			else
+			{
+				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
+			}
 		}
+	}
+	if (TIM_GetIntStatus(TIM1, TIM_INT_CC4) != RESET)
+	{
+		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
+		TIM_ConfigInt(TIM1, TIM_INT_CC4, DISABLE);
+		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
 	}
 	/* Cortex-M4 erratum 838869 workaround before exception return. */
 	__DSB();
@@ -394,6 +412,7 @@ void TIM8_CC_IRQHandler(void)
 	if (TIM_GetIntStatus(TIM8, TIM_INT_CC3) != RESET)
 	{
 		uint8_t leg = s_treatment_ch2_pending_leg;
+		uint16_t pulse_end_compare;
 
 		g_diag_tim8_cc_count++;
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
@@ -401,7 +420,24 @@ void TIM8_CC_IRQHandler(void)
 		if ((Pwr2 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
 		{
 			TreatmentPulse_SelectCh2Leg(leg);
+			pulse_end_compare = TIM_GetCnt(TIM8);
+			if (pulse_end_compare > TREATMENT_PULSE_WIDTH_TICKS)
+			{
+				TIM_SetCmp4(TIM8, pulse_end_compare - TREATMENT_PULSE_WIDTH_TICKS);
+				TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
+				TIM_ConfigInt(TIM8, TIM_INT_CC4, ENABLE);
+			}
+			else
+			{
+				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
+			}
 		}
+	}
+	if (TIM_GetIntStatus(TIM8, TIM_INT_CC4) != RESET)
+	{
+		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
+		TIM_ConfigInt(TIM8, TIM_INT_CC4, DISABLE);
+		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
 	}
 	/* Cortex-M4 erratum 838869 workaround before exception return. */
 	__DSB();
@@ -512,15 +548,15 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 	}
 
 	TIM_Enable(timer, DISABLE);
-	TIM_ConfigInt(timer, TIM_INT_UPDATE | TIM_INT_CC3, DISABLE);
-	TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3);
+	TIM_ConfigInt(timer, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4, DISABLE);
+	TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4);
 	NVIC_ClearPendingIRQ(update_irq);
 	NVIC_ClearPendingIRQ(compare_irq);
 
 	if (enabled != 0U)
 	{
 		TIM_SetCnt(timer, TREATMENT_TIMER_RELOAD_VALUE);
-		TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3);
+		TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4);
 		NVIC_ClearPendingIRQ(update_irq);
 		NVIC_ClearPendingIRQ(compare_irq);
 		TIM_ConfigInt(timer, TIM_INT_UPDATE, ENABLE);
@@ -538,6 +574,8 @@ void TIM1_UP_IRQHandler(void)
 	{
 		g_diag_tim1_update_count++;
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
+		TIM_ConfigInt(TIM1, TIM_INT_CC4, DISABLE);
+		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
 		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
 		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
 
@@ -880,6 +918,8 @@ void TIM8_UP_IRQHandler(void)
 	{
 		g_diag_tim8_update_count++;
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
+		TIM_ConfigInt(TIM8, TIM_INT_CC4, DISABLE);
+		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
 		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
 		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
 		if (Pwr2)
