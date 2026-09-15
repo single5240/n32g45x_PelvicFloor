@@ -34,8 +34,19 @@
 Stack_Size      EQU     0x00001500
 
                 AREA    STACK, NOINIT, READWRITE, ALIGN=3
+                EXPORT  Stack_Mem
 Stack_Mem       SPACE   Stack_Size
+                EXPORT  __initial_sp
 __initial_sp
+
+                ; Fault context retained across software and IWDG resets.
+                ; This area must remain NOINIT: C runtime startup must not clear it.
+                AREA    |.fault_snapshot|, NOINIT, READWRITE, ALIGN=3
+                EXPORT  __fault_snapshot_start
+                EXPORT  __fault_snapshot_end
+__fault_snapshot_start
+                SPACE   0x00000100
+__fault_snapshot_end
                                                   
 ; <h> Heap Configuration
 ;   <o>  Heap Size (in Bytes) <0x0-0xFFFFFFFF:8>
@@ -408,7 +419,6 @@ RSRAM_IRQHandler
 ;*******************************************************************************
                  IF      :DEF:__MICROLIB
                 
-                 EXPORT  __initial_sp
                  EXPORT  __heap_base
                  EXPORT  __heap_limit
                 

@@ -56,6 +56,8 @@ extern "C" {
 void App_DiagnosticsRecordFaultISR(uint16_t fault_type);
 void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
                                           const uint32_t *stack_frame,
+                                          uint32_t msp,
+                                          uint32_t psp,
                                           uint32_t exc_return);
 
 #define TM1621B_CS_PORT							GPIOC
@@ -163,28 +165,20 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 #define TREATMENT_CHANNEL_2         1U
 /* 台架联调：启用双通道 DAC 包络输出；量产前仍需完成负载幅值验证。 */
 #define TREATMENT_DAC_OUTPUT_ENABLE 1U
-/* 台架联调：置 1 后启用桥臂 PWM；死区未验收前默认保持关闭。 */
+/* 台架联调：置 1 后启用桥臂 PWM。 */
 #define TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE 1U
 /* 联调值基于当前 128 MHz 定时器时钟和预分频 7，量产值待实测确认。 */
 #define TREATMENT_PULSE_FREQUENCY_HZ        800U
 #define TREATMENT_PULSE_WIDTH_US            300U
-#define TREATMENT_BRIDGE_DEADTIME_US        50U
 #define TREATMENT_TIMER_TICKS_PER_US        16U
 #define TREATMENT_TIMER_PHASE_PERIOD_US     \
 	(1000000U / (2U * TREATMENT_PULSE_FREQUENCY_HZ))
 #define TREATMENT_TIMER_RELOAD_VALUE        \
 	((TREATMENT_TIMER_PHASE_PERIOD_US * TREATMENT_TIMER_TICKS_PER_US) - 1U)
-/* 向下计数：比较值按距重装载点的计数时间反向换算。 */
-#define TREATMENT_BRIDGE_PWM_COMPARE         TREATMENT_TIMER_RELOAD_VALUE
 #define TREATMENT_PULSE_WIDTH_TICKS          \
 	(TREATMENT_PULSE_WIDTH_US * TREATMENT_TIMER_TICKS_PER_US)
-#define TREATMENT_BRIDGE_DEADTIME_COMPARE  \
-	(TREATMENT_TIMER_RELOAD_VALUE -          \
-	 (TREATMENT_BRIDGE_DEADTIME_US * TREATMENT_TIMER_TICKS_PER_US))
-#define TREATMENT_BRIDGE_PULSE_END_COMPARE  \
-	(TREATMENT_TIMER_RELOAD_VALUE -          \
-	 ((TREATMENT_BRIDGE_DEADTIME_US +        \
-	   TREATMENT_PULSE_WIDTH_US) * TREATMENT_TIMER_TICKS_PER_US))
+/* 复用 QW-363 的向下计数 PWM 方案，CCR 对应单相有效脉宽计数。 */
+#define TREATMENT_BRIDGE_PWM_COMPARE         TREATMENT_PULSE_WIDTH_TICKS
 /* 台架联调：置 1 后两路 DAC 使用固定码值；量产构建必须保持关闭。 */
 #define TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE 0U
 #define TREATMENT_DAC_FIXED_VALUE             2000U
@@ -204,18 +198,12 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 #error "TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE must be 0 or 1"
 #endif
 
-#if (TREATMENT_BRIDGE_DEADTIME_US < 13U) || \
-    (TREATMENT_BRIDGE_DEADTIME_US >= 500U)
-#error "TREATMENT_BRIDGE_DEADTIME_US must be within 13..499 us"
-#endif
-
 #if (TREATMENT_PULSE_FREQUENCY_HZ != 800U)
 #error "TREATMENT_PULSE_FREQUENCY_HZ must be 800 Hz for the current treatment timing"
 #endif
 
-#if ((TREATMENT_BRIDGE_DEADTIME_US + TREATMENT_PULSE_WIDTH_US) >= \
-     TREATMENT_TIMER_PHASE_PERIOD_US)
-#error "Treatment deadtime and pulse width must fit within one phase period"
+#if (TREATMENT_PULSE_WIDTH_US >= TREATMENT_TIMER_PHASE_PERIOD_US)
+#error "Treatment pulse width must be shorter than one phase period"
 #endif
 
 #if (TREATMENT_DAC_FIXED_VALUE > 3800U)

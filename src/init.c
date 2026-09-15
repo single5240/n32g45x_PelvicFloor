@@ -208,7 +208,7 @@ void TIM1_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;/* 300 us active in each 625 us phase */
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -220,7 +220,7 @@ void TIM1_Configuration(void)
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;/* 300 us active in each 625 us phase */
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -228,19 +228,9 @@ void TIM1_Configuration(void)
 
     TIM_InitOc2(TIM1, &TIM_OCInitStructure);
 
-    /* CH3 starts the pulse after bridge deadtime; CH4 ends the 300 us pulse. */
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
-    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
-    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
-    TIM_InitOc3(TIM1, &TIM_OCInitStructure);
-
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PULSE_END_COMPARE;
-    TIM_InitOc4(TIM1, &TIM_OCInitStructure);
-
 	/* The application enables the counter and interrupts only while CH1 is active. */
 	TIM_EnableCtrlPwmOutputs(TIM1, ENABLE);
-	TIM_ConfigInt(TIM1, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4, DISABLE);
+	TIM_ConfigInt(TIM1, TIM_INT_UPDATE, DISABLE);
 	TIM_Enable(TIM1, DISABLE);
     
 }
@@ -263,11 +253,11 @@ void TIM8_Configuration(void)
 
     TIM_InitTimeBase(TIM8, &TIM_TimeBaseStructure);
 
-    /* TIM8_CH1N -> PA7/IN2L; keep disabled until requested by the ISR. */
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
+    /* TIM8_CH1N -> PA7/IN2L; PWM2 compensates the complementary output. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM2;///波形设置
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;///占空�?=Pulse/Period
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;/* 300 us active in each 625 us phase */
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;///优先�?
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -275,11 +265,11 @@ void TIM8_Configuration(void)
 
     TIM_InitOc1(TIM8, &TIM_OCInitStructure);
 
-    /* TIM8_CH2N -> PB0/IN2R; keep disabled until requested by the ISR. */
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM1;///波形设置
+    /* TIM8_CH2N -> PB0/IN2R; PWM2 compensates the complementary output. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_PWM2;///波形设置
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;///占空�?=Pulse/Period
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PWM_COMPARE;/* 300 us active in each 625 us phase */
     TIM_OCInitStructure.OcPolarity   = TIM_OC_POLARITY_HIGH;
     TIM_OCInitStructure.OcNPolarity  = TIM_OCN_POLARITY_HIGH;
     TIM_OCInitStructure.OcIdleState  = TIM_OC_IDLE_STATE_RESET;
@@ -287,18 +277,8 @@ void TIM8_Configuration(void)
 
     TIM_InitOc2(TIM8, &TIM_OCInitStructure);
 
-    /* CH3 starts the pulse after bridge deadtime; CH4 ends the 300 us pulse. */
-    TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
-    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
-    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_DEADTIME_COMPARE;
-    TIM_InitOc3(TIM8, &TIM_OCInitStructure);
-
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PULSE_END_COMPARE;
-    TIM_InitOc4(TIM8, &TIM_OCInitStructure);
-
     /* The application enables the counter and interrupts only while CH2 is active. */
-    TIM_ConfigInt(TIM8, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4, DISABLE);
+    TIM_ConfigInt(TIM8, TIM_INT_UPDATE, DISABLE);
     TIM_Enable(TIM8, DISABLE);
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
 }
@@ -546,19 +526,6 @@ void NVIC_Configuration(void)
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
-#if ((TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U) || \
-     (APP_DIAGNOSTICS_ENABLE != 0U))
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM1_CC_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
-    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_CC_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
-    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-#endif
     /* Enable the TIM2 global Interrupt */
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM2_IRQn;
 //    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;

@@ -33,6 +33,7 @@
  * @copyright Copyright (c) 2019, Nations Technologies Inc. All rights reserved.
  */
 #include "n32g45x_it.h"
+#include "treatment_ramp_table.h"
 
 uint16_t ChA_DACValue = 4090;
 uint16_t ChB_DACValue = 4090;
@@ -152,11 +153,15 @@ void NMI_Handler(void)
 }
 
 void App_FaultHandlerC(uint32_t *stack_frame,
+	                   uint32_t msp,
+	                   uint32_t psp,
 	                   uint32_t exc_return,
 	                   uint32_t fault_type)
 {
 	App_DiagnosticsRecordFaultContextISR((uint16_t)fault_type,
 	                                     stack_frame,
+	                                     msp,
+	                                     psp,
 	                                     exc_return);
 	App_FaultSafeShutdownISR();
 	while (1)
@@ -173,8 +178,11 @@ __asm void HardFault_Handler(void)
 		ITE EQ
 		MRSEQ R0, MSP
 		MRSNE R0, PSP
-		MOV R1, LR
-		MOVS R2, #1
+		MRS R1, MSP
+		MRS R2, PSP
+		MOV R3, LR
+		MOVS R12, #1
+		PUSH {R4, R12}
 		B App_FaultHandlerC
 	}
 
@@ -185,8 +193,11 @@ __asm void MemManage_Handler(void)
 		ITE EQ
 		MRSEQ R0, MSP
 		MRSNE R0, PSP
-		MOV R1, LR
-		MOVS R2, #2
+		MRS R1, MSP
+		MRS R2, PSP
+		MOV R3, LR
+		MOVS R12, #2
+		PUSH {R4, R12}
 		B App_FaultHandlerC
 	}
 
@@ -197,8 +208,11 @@ __asm void BusFault_Handler(void)
 		ITE EQ
 		MRSEQ R0, MSP
 		MRSNE R0, PSP
-		MOV R1, LR
-		MOVS R2, #3
+		MRS R1, MSP
+		MRS R2, PSP
+		MOV R3, LR
+		MOVS R12, #3
+		PUSH {R4, R12}
 		B App_FaultHandlerC
 	}
 
@@ -209,8 +223,11 @@ __asm void UsageFault_Handler(void)
 		ITE EQ
 		MRSEQ R0, MSP
 		MRSNE R0, PSP
-		MOV R1, LR
-		MOVS R2, #4
+		MRS R1, MSP
+		MRS R2, PSP
+		MOV R3, LR
+		MOVS R12, #4
+		PUSH {R4, R12}
 		B App_FaultHandlerC
 	}
 
@@ -221,22 +238,26 @@ __asm void UsageFault_Handler(void)
  */
 void HardFault_Handler(void)
 {
-	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_HARDFAULT);
+	App_FaultHandlerC(0, __get_MSP(), __get_PSP(), 0U,
+	                  APP_DIAG_FAULT_HARDFAULT);
 }
 
 void MemManage_Handler(void)
 {
-	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_MEMMANAGE);
+	App_FaultHandlerC(0, __get_MSP(), __get_PSP(), 0U,
+	                  APP_DIAG_FAULT_MEMMANAGE);
 }
 
 void BusFault_Handler(void)
 {
-	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_BUSFAULT);
+	App_FaultHandlerC(0, __get_MSP(), __get_PSP(), 0U,
+	                  APP_DIAG_FAULT_BUSFAULT);
 }
 
 void UsageFault_Handler(void)
 {
-	App_FaultHandlerC(0, 0U, APP_DIAG_FAULT_USAGEFAULT);
+	App_FaultHandlerC(0, __get_MSP(), __get_PSP(), 0U,
+	                  APP_DIAG_FAULT_USAGEFAULT);
 }
 
 #endif
@@ -328,14 +349,47 @@ void USART2_IRQHandler(void)
  * @brief  This function handles USARTy global interrupt request.
  */
 
-uint16_t Set_Value = 55;
+#define TREATMENT_POWER_LEVEL_MAX 60U
+
+/* 0..60 档对应原始 Set_Value=55 的幅值基值。 */
+static const uint16_t s_treatment_power_table[TREATMENT_POWER_LEVEL_MAX + 1U] =
+{
+	0U, 55U, 110U, 165U, 220U, 275U, 330U, 385U, 440U, 495U,
+	550U, 605U, 660U, 715U, 770U, 825U, 880U, 935U, 990U, 1045U,
+	1100U, 1155U, 1210U, 1265U, 1320U, 1375U, 1430U, 1485U, 1540U, 1595U,
+	1650U, 1705U, 1760U, 1815U, 1870U, 1925U, 1980U, 2035U, 2090U, 2145U,
+	2200U, 2255U, 2310U, 2365U, 2420U, 2475U, 2530U, 2585U, 2640U, 2695U,
+	2750U, 2805U, 2860U, 2915U, 2970U, 3025U, 3080U, 3135U, 3190U, 3245U,
+	3300U
+};
+
+__STATIC_FORCEINLINE uint16_t TreatmentPulse_LookupPower(uint8_t level)
+{
+	if (level > TREATMENT_POWER_LEVEL_MAX)
+	{
+		level = TREATMENT_POWER_LEVEL_MAX;
+	}
+	return s_treatment_power_table[level];
+}
+
+__STATIC_FORCEINLINE uint16_t TreatmentPulse_LookupRamp(uint16_t power,
+	                                                    uint32_t ramp_step,
+	                                                    uint8_t table_shift)
+{
+	uint32_t table_index = ramp_step << table_shift;
+
+	if (table_index >= TREATMENT_RAMP_TABLE_SIZE)
+	{
+		table_index = TREATMENT_RAMP_TABLE_SIZE - 1U;
+	}
+	return (uint16_t)(((uint32_t)power *
+	                   g_treatment_ramp_q16[table_index]) >>
+	                  TREATMENT_RAMP_Q_SHIFT);
+}
 
 #define TREATMENT_BRIDGE_OFF    0U
 #define TREATMENT_BRIDGE_LEFT   1U
 #define TREATMENT_BRIDGE_RIGHT  2U
-
-static volatile uint8_t s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
-static volatile uint8_t s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
 
 static void TreatmentPulse_SelectCh1Leg(uint8_t leg)
 {
@@ -375,82 +429,6 @@ static void TreatmentPulse_SelectCh2Leg(uint8_t leg)
 #else
 	(void)leg;
 #endif
-}
-
-void TIM1_CC_IRQHandler(void)
-{
-	if (TIM_GetIntStatus(TIM1, TIM_INT_CC3) != RESET)
-	{
-		uint8_t leg = s_treatment_ch1_pending_leg;
-		uint16_t pulse_end_compare;
-
-#if (APP_DIAGNOSTICS_ENABLE != 0U)
-		g_diag_tim1_cc_count++;
-#endif
-		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
-		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
-		if ((Pwr1 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
-		{
-			TreatmentPulse_SelectCh1Leg(leg);
-			pulse_end_compare = TIM_GetCnt(TIM1);
-			if (pulse_end_compare > TREATMENT_PULSE_WIDTH_TICKS)
-			{
-				TIM_SetCmp4(TIM1, pulse_end_compare - TREATMENT_PULSE_WIDTH_TICKS);
-				TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
-				TIM_ConfigInt(TIM1, TIM_INT_CC4, ENABLE);
-			}
-			else
-			{
-				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
-			}
-		}
-	}
-	if (TIM_GetIntStatus(TIM1, TIM_INT_CC4) != RESET)
-	{
-		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
-		TIM_ConfigInt(TIM1, TIM_INT_CC4, DISABLE);
-		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
-	}
-	/* Cortex-M4 erratum 838869 workaround before exception return. */
-	__DSB();
-}
-
-void TIM8_CC_IRQHandler(void)
-{
-	if (TIM_GetIntStatus(TIM8, TIM_INT_CC3) != RESET)
-	{
-		uint8_t leg = s_treatment_ch2_pending_leg;
-		uint16_t pulse_end_compare;
-
-#if (APP_DIAGNOSTICS_ENABLE != 0U)
-		g_diag_tim8_cc_count++;
-#endif
-		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
-		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
-		if ((Pwr2 != 0U) && (leg != TREATMENT_BRIDGE_OFF))
-		{
-			TreatmentPulse_SelectCh2Leg(leg);
-			pulse_end_compare = TIM_GetCnt(TIM8);
-			if (pulse_end_compare > TREATMENT_PULSE_WIDTH_TICKS)
-			{
-				TIM_SetCmp4(TIM8, pulse_end_compare - TREATMENT_PULSE_WIDTH_TICKS);
-				TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
-				TIM_ConfigInt(TIM8, TIM_INT_CC4, ENABLE);
-			}
-			else
-			{
-				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
-			}
-		}
-	}
-	if (TIM_GetIntStatus(TIM8, TIM_INT_CC4) != RESET)
-	{
-		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
-		TIM_ConfigInt(TIM8, TIM_INT_CC4, DISABLE);
-		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
-	}
-	/* Cortex-M4 erratum 838869 workaround before exception return. */
-	__DSB();
 }
 
 static uint8_t TreatmentPulse_NormalizeMode(uint8_t mode)
@@ -526,19 +504,16 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 	uint32_t primask = __get_PRIMASK();
 	TIM_Module *timer;
 	IRQn_Type update_irq;
-	IRQn_Type compare_irq;
 
 	if (channel == TREATMENT_CHANNEL_1)
 	{
 		timer = TIM1;
 		update_irq = TIM1_UP_IRQn;
-		compare_irq = TIM1_CC_IRQn;
 	}
 	else if (channel == TREATMENT_CHANNEL_2)
 	{
 		timer = TIM8;
 		update_irq = TIM8_UP_IRQn;
-		compare_irq = TIM8_CC_IRQn;
 	}
 	else
 	{
@@ -548,32 +523,24 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 	__disable_irq();
 	if (channel == TREATMENT_CHANNEL_1)
 	{
-		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
 		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
 	}
 	else
 	{
-		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
 		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
 	}
 
 	TIM_Enable(timer, DISABLE);
-	TIM_ConfigInt(timer, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4, DISABLE);
-	TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4);
+	TIM_ConfigInt(timer, TIM_INT_UPDATE, DISABLE);
+	TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE);
 	NVIC_ClearPendingIRQ(update_irq);
-	NVIC_ClearPendingIRQ(compare_irq);
 
 	if (enabled != 0U)
 	{
 		TIM_SetCnt(timer, TREATMENT_TIMER_RELOAD_VALUE);
-		TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE | TIM_INT_CC3 | TIM_INT_CC4);
+		TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE);
 		NVIC_ClearPendingIRQ(update_irq);
-		NVIC_ClearPendingIRQ(compare_irq);
 		TIM_ConfigInt(timer, TIM_INT_UPDATE, ENABLE);
-#if ((TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U) || \
-     (APP_DIAGNOSTICS_ENABLE != 0U))
-		TIM_ConfigInt(timer, TIM_INT_CC3, ENABLE);
-#endif
 		TIM_Enable(timer, ENABLE);
 	}
 	__set_PRIMASK(primask);
@@ -589,24 +556,19 @@ void TIM1_UP_IRQHandler(void)
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
 		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
 		__DSB();
-		TIM_ConfigInt(TIM1, TIM_INT_CC4, DISABLE);
-		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
-		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
-		TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_OFF);
-
 		if (Pwr1)									////
 		{
 			E1_Step++;
+			E1_Power = TreatmentPulse_LookupPower(Pwr1);
 			switch (Wave_SelectA)
 			{
 			case 0: /*长周期梯形波***************************************************************************************/
-				E1_Power = Pwr1 * Set_Value;
 				switch (TraWave_SelectA1)
 				{
 				case 0: /*上升段100ms*/
 					if (E1_Step < 200)
 					{
-						Pwr1_ADCValue = (E1_Power * E1_Step) / 200;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, E1_Step, 4U);
 					}
 					else
 					{
@@ -626,7 +588,7 @@ void TIM1_UP_IRQHandler(void)
 				case 2: /*下降段100ms*/
 					if (E1_Step < 800)
 					{
-						Pwr1_ADCValue = (E1_Power * (800 - E1_Step)) / 200;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, 800U - E1_Step, 4U);
 					}
 					else
 					{
@@ -659,13 +621,12 @@ void TIM1_UP_IRQHandler(void)
 				}
 				break;
 			case 1: /*长周期棱形波***************************************************************************************/
-				E1_Power = Pwr1 * Set_Value;
 				switch (LenWave_SelectA1)
 				{
 				case 0: /*上升段400ms*/
 					if (E1_Step < 800)
 					{
-						Pwr1_ADCValue = (E1_Power * E1_Step) / 800;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, E1_Step, 2U);
 					}
 					else
 					{
@@ -675,7 +636,7 @@ void TIM1_UP_IRQHandler(void)
 				case 1: /*下降段400ms*/
 					if (E1_Step < 1600)
 					{
-						Pwr1_ADCValue = (E1_Power * (1600 - E1_Step)) / 800;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, 1600U - E1_Step, 2U);
 					}
 					else
 					{
@@ -708,13 +669,12 @@ void TIM1_UP_IRQHandler(void)
 				}
 				break;
 			case 2: /*长周期三角波***************************************************************************************/
-				E1_Power = Pwr1 * Set_Value;
 				switch (TriWave_SelectA1)
 				{
 				case 0: /*上升段1600ms*/
 					if (E1_Step < 3200)
 					{
-						Pwr1_ADCValue = (E1_Power * E1_Step) / 3200;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, E1_Step, 0U);
 					}
 					else
 					{
@@ -746,13 +706,12 @@ void TIM1_UP_IRQHandler(void)
 				}
 				break;
 			case 3: /*短周期梯形波***************************************************************************************/
-				E1_Power = Pwr1 * Set_Value;
 				switch (TraWave_SelectA2)
 				{
 				case 0: /*上升段50ms*/
 					if (E1_Step < 100)
 					{
-						Pwr1_ADCValue = (E1_Power * E1_Step) / 100;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, E1_Step, 5U);
 					}
 					else
 					{
@@ -772,7 +731,7 @@ void TIM1_UP_IRQHandler(void)
 				case 2: /*下降段50ms*/
 					if (E1_Step < 600)
 					{
-						Pwr1_ADCValue = (E1_Power * (600 - E1_Step)) / 100;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, 600U - E1_Step, 5U);
 					}
 					else
 					{
@@ -805,13 +764,12 @@ void TIM1_UP_IRQHandler(void)
 				}
 				break;
 			case 4: /*短周期棱形波***************************************************************************************/
-				E1_Power = Pwr1 * Set_Value;
 				switch (LenWave_SelectA2)
 				{
 				case 0: /*上升段200ms*/
 					if (E1_Step < 400)
 					{
-						Pwr1_ADCValue = (E1_Power * E1_Step) / 400;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, E1_Step, 3U);
 					}
 					else
 					{
@@ -821,7 +779,7 @@ void TIM1_UP_IRQHandler(void)
 				case 1: /*下降段200ms*/
 					if (E1_Step < 800)
 					{
-						Pwr1_ADCValue = (E1_Power * (800 - E1_Step)) / 400;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, 800U - E1_Step, 3U);
 					}
 					else
 					{
@@ -854,13 +812,12 @@ void TIM1_UP_IRQHandler(void)
 				}
 				break;
 			case 5: /*短周期三角波***************************************************************************************/
-				E1_Power = Pwr1 * Set_Value;
 				switch (TriWave_SelectA2)
 				{
 				case 0: /*上升段800ms*/
 					if (E1_Step < 1600)
 					{
-						Pwr1_ADCValue = (E1_Power * E1_Step) / 1600;
+						Pwr1_ADCValue = TreatmentPulse_LookupRamp(E1_Power, E1_Step, 1U);
 					}
 					else
 					{
@@ -909,12 +866,12 @@ void TIM1_UP_IRQHandler(void)
 			Tim1_Count++;
 			if (Tim1_Count == 1U)
 			{
-				s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_LEFT;
+				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_LEFT);
 			}
 			else if (Tim1_Count == 2U)
 			{
 				Tim1_Count = 0U;
-				s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_RIGHT;
+				TreatmentPulse_SelectCh1Leg(TREATMENT_BRIDGE_RIGHT);
 			}
 		}
 		else
@@ -943,23 +900,19 @@ void TIM8_UP_IRQHandler(void)
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
 		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
 		__DSB();
-		TIM_ConfigInt(TIM8, TIM_INT_CC4, DISABLE);
-		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
-		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
-		TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_OFF);
 		if (Pwr2)
 		{
 			E2_Step++;
+			E2_Power = TreatmentPulse_LookupPower(Pwr2);
 			switch (Wave_SelectB)
 			{
 			case 0: /*长周期梯形波***************************************************************************************/
-				E2_Power = Pwr2 * Set_Value;
 				switch (TraWave_SelectB1)
 				{
 				case 0: /*上升段100ms*/
 					if (E2_Step < 200)
 					{
-						Pwr2_ADCValue = (E2_Power * E2_Step) / 200;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, E2_Step, 4U);
 					}
 					else
 					{
@@ -979,7 +932,7 @@ void TIM8_UP_IRQHandler(void)
 				case 2: /*下降段100ms*/
 					if (E2_Step < 800)
 					{
-						Pwr2_ADCValue = (E2_Power * (800 - E2_Step)) / 200;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, 800U - E2_Step, 4U);
 					}
 					else
 					{
@@ -1012,13 +965,12 @@ void TIM8_UP_IRQHandler(void)
 				}
 				break;
 			case 1: /*长周期棱形波***************************************************************************************/
-				E2_Power = Pwr2 * Set_Value;
 				switch (LenWave_SelectB1)
 				{
 				case 0: /*上升段400ms*/
 					if (E2_Step < 800)
 					{
-						Pwr2_ADCValue = (E2_Power * E2_Step) / 800;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, E2_Step, 2U);
 					}
 					else
 					{
@@ -1028,7 +980,7 @@ void TIM8_UP_IRQHandler(void)
 				case 1: /*下降段400ms*/
 					if (E2_Step < 1600)
 					{
-						Pwr2_ADCValue = (E2_Power * (1600 - E2_Step)) / 800;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, 1600U - E2_Step, 2U);
 					}
 					else
 					{
@@ -1061,13 +1013,12 @@ void TIM8_UP_IRQHandler(void)
 				}
 				break;
 			case 2: /*长周期三角波***************************************************************************************/
-				E2_Power = Pwr2 * Set_Value;
 				switch (TriWave_SelectB1)
 				{
 				case 0: /*上升段1600ms*/
 					if (E2_Step < 3200)
 					{
-						Pwr2_ADCValue = (E2_Power * E2_Step) / 3200;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, E2_Step, 0U);
 					}
 					else
 					{
@@ -1099,13 +1050,12 @@ void TIM8_UP_IRQHandler(void)
 				}
 				break;
 			case 3: /*短周期梯形波***************************************************************************************/
-				E2_Power = Pwr2 * Set_Value;
 				switch (TraWave_SelectB2)
 				{
 				case 0: /*上升段50ms*/
 					if (E2_Step < 100)
 					{
-						Pwr2_ADCValue = (E2_Power * E2_Step) / 100;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, E2_Step, 5U);
 					}
 					else
 					{
@@ -1125,7 +1075,7 @@ void TIM8_UP_IRQHandler(void)
 				case 2: /*下降段50ms*/
 					if (E2_Step < 600)
 					{
-						Pwr2_ADCValue = (E2_Power * (600 - E2_Step)) / 100;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, 600U - E2_Step, 5U);
 					}
 					else
 					{
@@ -1158,13 +1108,12 @@ void TIM8_UP_IRQHandler(void)
 				}
 				break;
 			case 4: /*短周期棱形波***************************************************************************************/
-				E2_Power = Pwr2 * Set_Value;
 				switch (LenWave_SelectB2)
 				{
 				case 0: /*上升段200ms*/
 					if (E2_Step < 400)
 					{
-						Pwr2_ADCValue = (E2_Power * E2_Step) / 400;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, E2_Step, 3U);
 					}
 					else
 					{
@@ -1174,7 +1123,7 @@ void TIM8_UP_IRQHandler(void)
 				case 1: /*下降段200ms*/
 					if (E2_Step < 800)
 					{
-						Pwr2_ADCValue = (E2_Power * (800 - E2_Step)) / 400;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, 800U - E2_Step, 3U);
 					}
 					else
 					{
@@ -1207,13 +1156,12 @@ void TIM8_UP_IRQHandler(void)
 				}
 				break;
 			case 5: /*短周期三角波***************************************************************************************/
-				E2_Power = Pwr2 * Set_Value;
 				switch (TriWave_SelectB2)
 				{
 				case 0: /*上升段800ms*/
 					if (E2_Step < 1600)
 					{
-						Pwr2_ADCValue = (E2_Power * E2_Step) / 1600;
+						Pwr2_ADCValue = TreatmentPulse_LookupRamp(E2_Power, E2_Step, 1U);
 					}
 					else
 					{
@@ -1263,12 +1211,12 @@ void TIM8_UP_IRQHandler(void)
 			Tim8_Count++;
 			if (Tim8_Count == 1U)
 			{
-				s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_LEFT;
+				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_LEFT);
 			}
 			else if (Tim8_Count == 2U)
 			{
 				Tim8_Count = 0U;
-				s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_RIGHT;
+				TreatmentPulse_SelectCh2Leg(TREATMENT_BRIDGE_RIGHT);
 			}
 		}
 		else

@@ -48,9 +48,11 @@ Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时
 
 无充电器时每次物理上电默认进入 `POWER_OFF`，保留 10 s 下载和恢复窗口，期间电源键或 PB10/PB11 充电状态边沿会重新开始计时。窗口结束后通过 PB15/EXTI15、PB10/EXTI10、PB11/EXTI11 唤醒的 STOP0 降低功耗；唤醒后先恢复 HSI-PLL 产生的 128 MHz 时钟和 1 ms SysTick，再恢复其他 NVIC 中断。正常工作后 IWDG 已无法停止，因此再次关机时先立即关闭危险输出，继续运行蜂鸣器任务 2 s，再用 BKP DAT42 标记并受控复位；该标记仅在软件复位原因同时成立时有效，复位后不重复等待 10 s，直接进入 STOP0。STOP0 要求选项字节为软件 IWDG 且 `nRST_STOP=1`，条件不满足时仅记录错误并保持普通关机等待，不在运行时改写选项字节。
 
-为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数、TIM1/TIM8 无有效 UPDATE 标志的异常入口计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次快照，其中 `spur=TIM1/TIM8` 为饱和到 63 的异常入口计数。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
+为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数、TIM1/TIM8 无有效 UPDATE 标志的异常入口计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。启动文件另有独立 `.fault_snapshot` NOINIT SRAM 区：故障时保存 MSP/PSP、完整基础异常帧、基础帧前后各 8 字、ICSR/SHCSR/CCR、MSP 距栈底距离及栈哨兵余量；软件或 IWDG 复位后以 `fault retained` RTT 日志输出，读取后不清除。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次 BKP 快照，其中 `spur=TIM1/TIM8` 为饱和到 63 的异常入口计数。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
 
-TIM1/TIM8 仅在对应治疗通道强度非零时启动计数器及 UPDATE/CC3 中断。通道归零、模式切换、关机或故障关断时立即关闭对应定时器中断并清除外设和 NVIC 挂起标志；再次从零档启动时复位计数器后重新使能，避免关机和未使用通道持续产生无效高频中断。
+治疗脉冲采用 QW-363 的向下计数 PWM 方案。TIM1/TIM8 仅在对应治疗通道强度非零时启动计数器及 UPDATE 中断；桥臂极性在 UPDATE ISR 内直接翻转，不使用 CC3/CC4 中断。每相周期为 625 us，其中 PWM 有效脉宽为 300 us，其余 325 us 两桥臂均无有效输出，形成换向全关断窗口。CH2 因使用 TIM8_CH1N/CH2N，已按互补输出采用等效 PWM 模式。通道归零、模式切换、关机或故障关断时立即关闭对应定时器中断并清除外设和 NVIC 挂起标志；再次从零档启动时复位计数器后重新使能，避免关机和未使用通道持续产生无效高频中断。
+
+TIM1/TIM8 的包络斜坡统一使用 3200 点 Q16 只读系数表，短斜坡通过移位索引复用该表；更新中断内不再执行包络整数除法，0～60 档强度基值也直接查表。该优化约增加 6.4 KB Flash、不增加运行时 RAM，相对原整数计算的最大量化差异为 1 个 DAC 计算码。
 
 SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外设和 SRAM 写入完成后再进行异常返回。该处理同时作为 Cortex-M4 r0p0/r0p1 勘误 838869 的软件规避措施；启动日志输出 CPUID，供目标芯片内核版本核对。
 对于已确认的 Cortex-M4 r0p0/r0p1，固件还会在 MPU 关闭时设置 `ACTLR.DISDEFWBUF`，全局关闭默认写缓冲，作为勘误 838869 的强化规避。启动日志中的 `actlr` 和 `err838869` 用于确认规避是否实际生效；该措施可能轻微增加 SRAM/外设写入延迟。
@@ -73,7 +75,7 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 
 - 治疗页面支持 P1～P3、双通道选择与 0～60 档强度。
 - CH1 使用 TIM1，幅值链路为 PA5/DAC 通道 2；CH2 使用 TIM8，幅值链路为 PA4/DAC 通道 1。
-- 桥臂换向采用“当前桥臂关闭 → 全关断死区 → 另一桥臂开启”。TIM1/TIM8 的 CC3 比较中断仅用于结束死区。
+- 桥臂换向在 TIM1/TIM8 的 UPDATE ISR 中切换左右桥臂，不使用 CC3/CC4 比较中断；每个 625 us 相位仅输出 300 us 有效脉冲，剩余 325 us 为全关断窗口。
 - 每个通道的两侧桥臂必须互斥，禁止同时导通。
 
 ### 压力与电池
@@ -113,10 +115,9 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | --- | ---: | --- |
 | `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM6/DAC 治疗幅值链路；量产前仍需完成负载幅值验证。 |
 | `APP_DIAGNOSTICS_ENABLE` | `0` | 卡死定位诊断关闭；诊断构建时置 1，并配合 DAC/桥臂置 0 保留内部时序中断负载。 |
-| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM1/TIM8 桥臂 PWM 物理输出；死区未验收前不得压缩。 |
+| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM1/TIM8 桥臂 PWM 物理输出。 |
 | `TREATMENT_PULSE_FREQUENCY_HZ` | `800` | 完整双相脉冲频率；每相槽为 625 us。 |
-| `TREATMENT_PULSE_WIDTH_US` | `300` | 单相桥臂导通目标宽度；由 CC4 比较事件关断。 |
-| `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 换向全关断死区，基于当前 128 MHz 时钟和定时器预分频 7；不可在未测关断时间前缩短。 |
+| `TREATMENT_PULSE_WIDTH_US` | `300` | 单相桥臂有效脉宽，由定时器 PWM 比较值硬件关断。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | `1` 时强制两路 DAC 输出固定码值，仅限联调。 |
 | `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定 DAC 联调码值；受上限 3800 编译检查保护。 |
 | `MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT` / `MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT` | `40` / `60` | 气泵 TIM4_CH4 在高/低电压端的 PWM 占空比。 |

@@ -166,6 +166,11 @@ typedef enum
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 #define APP_DIAG_MAGIC                    0xD316U
 #define APP_DIAG_VERSION                  0x0003U
+#define APP_FAULT_SNAPSHOT_MAGIC           0x46534E50UL
+#define APP_FAULT_SNAPSHOT_VERSION         0x0001UL
+#define APP_STACK_SENTINEL_MAGIC           0x53544B57UL
+#define APP_STACK_SENTINEL_PATTERN         0xA5A5A5A5UL
+#define APP_STACK_SENTINEL_GUARD_BYTES     128U
 #define APP_DIAG_SNAPSHOT_PERIOD_MS       100U
 #define APP_DIAG_FAULT_TYPE_MASK          0x000FU
 #define APP_DIAG_SPURIOUS_COUNT_MASK      0x003FU
@@ -224,6 +229,39 @@ typedef struct
 	uint16_t usart_noise_errors;
 	uint16_t usart_parity_errors;
 } AppDiagSnapshot_t;
+
+typedef struct
+{
+	uint32_t magic;
+	uint32_t version;
+	uint32_t sequence;
+	uint32_t fault_type;
+	uint32_t exc_return;
+	uint32_t msp;
+	uint32_t psp;
+	uint32_t exception_stack;
+	uint32_t core_frame;
+	uint32_t stacked[APP_DIAG_BASIC_FRAME_WORDS];
+	uint32_t frame_before[8];
+	uint32_t frame_after[8];
+	uint32_t icsr;
+	uint32_t shcsr;
+	uint32_t ccr;
+	uint32_t msp_distance_from_bottom;
+	uint32_t stack_sentinel_range_top;
+	uint32_t stack_sentinel_free_bytes;
+	uint32_t stack_sentinel_magic;
+} AppFaultSnapshot_t;
+
+/* Defined as a 256-byte NOINIT area by startup_n32g45x.s. */
+extern uint8_t __fault_snapshot_start[];
+extern uint8_t Stack_Mem[];
+extern uint8_t __initial_sp[];
+
+static volatile AppFaultSnapshot_t * const s_fault_snapshot =
+	(volatile AppFaultSnapshot_t *)__fault_snapshot_start;
+typedef char AppFaultSnapshotSizeCheck[
+	(sizeof(AppFaultSnapshot_t) <= 0x100U) ? 1 : -1];
 #endif
 
 #define APP_STATE_MASK(state)             ((uint8_t)(1U << (uint8_t)(state)))
@@ -680,6 +718,8 @@ static void Power_Task1000ms(void);
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 static void AppDiagnostics_Init(void);
 static void AppDiagnostics_LogPrevious(uint8_t watchdog_reset);
+static void AppDiagnostics_LogFaultSnapshot(void);
+static void AppDiagnostics_InitStackSentinel(void);
 static void AppDiagnostics_SetStage(uint16_t stage);
 static void AppDiagnostics_RecordEvent(AppEvent_t event);
 static void AppDiagnostics_SnapshotRuntime(void);
@@ -704,6 +744,73 @@ static void AppDiagnostics_Write32(__IO uint16_t *low,
 {
 	*low = (uint16_t)value;
 	*high = (uint16_t)(value >> 16U);
+}
+
+static uint8_t AppDiagnostics_IsSramRange(uint32_t address, uint32_t size)
+{
+	return ((address >= APP_DIAG_SRAM_START) &&
+	        (size <= (APP_DIAG_SRAM_END - APP_DIAG_SRAM_START)) &&
+	        (address <= (APP_DIAG_SRAM_END - size))) ? 1U : 0U;
+}
+
+static uint32_t AppDiagnostics_GetMspDistanceFromBottom(uint32_t msp)
+{
+	uint32_t stack_bottom = (uint32_t)Stack_Mem;
+	uint32_t stack_top = (uint32_t)__initial_sp;
+
+	if ((msp < stack_bottom) || (msp > stack_top))
+	{
+		return 0xFFFFFFFFUL;
+	}
+	return msp - stack_bottom;
+}
+
+static uint32_t AppDiagnostics_GetStackSentinelFreeBytes(void)
+{
+	uint32_t address = (uint32_t)Stack_Mem;
+	uint32_t range_top = s_fault_snapshot->stack_sentinel_range_top;
+
+	if ((s_fault_snapshot->stack_sentinel_magic != APP_STACK_SENTINEL_MAGIC) ||
+	    (range_top <= address) ||
+	    (range_top > (uint32_t)__initial_sp))
+	{
+		return 0U;
+	}
+	while ((address < range_top) &&
+	       (*((volatile uint32_t *)address) == APP_STACK_SENTINEL_PATTERN))
+	{
+		address += sizeof(uint32_t);
+	}
+	return address - (uint32_t)Stack_Mem;
+}
+
+static void AppDiagnostics_InitStackSentinel(void)
+{
+	uint32_t stack_bottom = (uint32_t)Stack_Mem;
+	uint32_t stack_top = (uint32_t)__initial_sp;
+	uint32_t range_top = __get_MSP();
+	uint32_t address;
+
+	if ((s_fault_snapshot->stack_sentinel_magic == APP_STACK_SENTINEL_MAGIC) &&
+	    (s_fault_snapshot->stack_sentinel_range_top > stack_bottom) &&
+	    (s_fault_snapshot->stack_sentinel_range_top <= stack_top))
+	{
+		return;
+	}
+	if (range_top <= (stack_bottom + APP_STACK_SENTINEL_GUARD_BYTES))
+	{
+		return;
+	}
+	range_top = (range_top - APP_STACK_SENTINEL_GUARD_BYTES) & ~0x3UL;
+	for (address = stack_bottom; address < range_top;
+	     address += sizeof(uint32_t))
+	{
+		*((volatile uint32_t *)address) = APP_STACK_SENTINEL_PATTERN;
+	}
+	__DMB();
+	s_fault_snapshot->stack_sentinel_range_top = range_top;
+	s_fault_snapshot->stack_sentinel_free_bytes = range_top - stack_bottom;
+	s_fault_snapshot->stack_sentinel_magic = APP_STACK_SENTINEL_MAGIC;
 }
 
 static void AppDiagnostics_Init(void)
@@ -813,6 +920,48 @@ static void AppDiagnostics_LogPrevious(uint8_t watchdog_reset)
 	}
 }
 
+static void AppDiagnostics_LogFaultSnapshot(void)
+{
+	volatile AppFaultSnapshot_t *snapshot = s_fault_snapshot;
+	uint32_t sentinel_range_bytes = 0U;
+
+	if ((snapshot->magic != APP_FAULT_SNAPSHOT_MAGIC) ||
+	    (snapshot->version != APP_FAULT_SNAPSHOT_VERSION))
+	{
+		return;
+	}
+	if ((snapshot->stack_sentinel_magic == APP_STACK_SENTINEL_MAGIC) &&
+	    (snapshot->stack_sentinel_range_top > (uint32_t)Stack_Mem) &&
+	    (snapshot->stack_sentinel_range_top <= (uint32_t)__initial_sp))
+	{
+		sentinel_range_bytes = snapshot->stack_sentinel_range_top -
+		                       (uint32_t)Stack_Mem;
+	}
+	LOG_W("fault retained seq=%u type=%u exc_return=0x%08x msp=0x%08x psp=0x%08x frame=0x%08x core=0x%08x",
+	      snapshot->sequence, snapshot->fault_type, snapshot->exc_return,
+	      snapshot->msp, snapshot->psp, snapshot->exception_stack,
+	      snapshot->core_frame);
+	LOG_W("fault stacked r0=%08x r1=%08x r2=%08x r3=%08x r12=%08x lr=%08x pc=%08x xpsr=%08x",
+	      snapshot->stacked[0], snapshot->stacked[1], snapshot->stacked[2],
+	      snapshot->stacked[3], snapshot->stacked[4], snapshot->stacked[5],
+	      snapshot->stacked[6], snapshot->stacked[7]);
+	LOG_W("fault frame before=%08x %08x %08x %08x %08x %08x %08x %08x",
+	      snapshot->frame_before[0], snapshot->frame_before[1],
+	      snapshot->frame_before[2], snapshot->frame_before[3],
+	      snapshot->frame_before[4], snapshot->frame_before[5],
+	      snapshot->frame_before[6], snapshot->frame_before[7]);
+	LOG_W("fault frame after=%08x %08x %08x %08x %08x %08x %08x %08x",
+	      snapshot->frame_after[0], snapshot->frame_after[1],
+	      snapshot->frame_after[2], snapshot->frame_after[3],
+	      snapshot->frame_after[4], snapshot->frame_after[5],
+	      snapshot->frame_after[6], snapshot->frame_after[7]);
+	LOG_W("fault scb icsr=%08x shcsr=%08x ccr=%08x msp_bottom_distance=%u sentinel_free=%u/%u",
+	      snapshot->icsr, snapshot->shcsr, snapshot->ccr,
+	      snapshot->msp_distance_from_bottom,
+	      snapshot->stack_sentinel_free_bytes,
+	      sentinel_range_bytes);
+}
+
 static void AppDiagnostics_SetStage(uint16_t stage)
 {
 	AppDiagnostics_Write32(&BKP->DAT5, &BKP->DAT6, s_system_tick_ms);
@@ -864,16 +1013,40 @@ static void AppDiagnostics_SnapshotRuntime(void)
 
 void App_DiagnosticsRecordFaultISR(uint16_t fault_type)
 {
-	App_DiagnosticsRecordFaultContextISR(fault_type, 0, 0U);
+	App_DiagnosticsRecordFaultContextISR(fault_type, 0,
+	                                     __get_MSP(), __get_PSP(), 0U);
 }
 
 void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 	                                      const uint32_t *stack_frame,
+	                                      uint32_t msp,
+	                                      uint32_t psp,
 	                                      uint32_t exc_return)
 {
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 	uint32_t frame_address = (uint32_t)stack_frame;
 	const uint32_t *core_frame = stack_frame;
+	uint32_t index;
+	uint8_t frame_valid = 0U;
+	uint32_t sequence = s_fault_snapshot->sequence + 1U;
+
+	/* Mark invalid first. A nested fault cannot be reported as a complete record. */
+	s_fault_snapshot->magic = 0U;
+	s_fault_snapshot->version = APP_FAULT_SNAPSHOT_VERSION;
+	s_fault_snapshot->sequence = sequence;
+	s_fault_snapshot->fault_type = fault_type;
+	s_fault_snapshot->exc_return = exc_return;
+	s_fault_snapshot->msp = msp;
+	s_fault_snapshot->psp = psp;
+	s_fault_snapshot->exception_stack = frame_address;
+	s_fault_snapshot->core_frame = 0U;
+	s_fault_snapshot->icsr = SCB->ICSR;
+	s_fault_snapshot->shcsr = SCB->SHCSR;
+	s_fault_snapshot->ccr = SCB->CCR;
+	s_fault_snapshot->msp_distance_from_bottom =
+		AppDiagnostics_GetMspDistanceFromBottom(msp);
+	s_fault_snapshot->stack_sentinel_free_bytes =
+		AppDiagnostics_GetStackSentinelFreeBytes();
 
 	AppDiagnostics_SnapshotRuntime();
 	BKP->DAT8 = (uint16_t)((BKP->DAT8 & ~APP_DIAG_FAULT_TYPE_MASK) |
@@ -890,10 +1063,12 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 		core_frame = (const uint32_t *)frame_address;
 	}
 	if ((core_frame != 0) && ((frame_address & 0x3U) == 0U) &&
-	    (frame_address >= APP_DIAG_SRAM_START) &&
-	    (frame_address <= (APP_DIAG_SRAM_END -
-	                       APP_DIAG_BASIC_FRAME_WORDS * sizeof(uint32_t))))
+	    (AppDiagnostics_IsSramRange(frame_address -
+	                                (8U * sizeof(uint32_t)),
+	                                24U * sizeof(uint32_t)) != 0U))
 	{
+		frame_valid = 1U;
+		s_fault_snapshot->core_frame = frame_address;
 		AppDiagnostics_Write32(&BKP->DAT34, &BKP->DAT35, core_frame[6]);
 		AppDiagnostics_Write32(&BKP->DAT36, &BKP->DAT37, core_frame[5]);
 		AppDiagnostics_Write32(&BKP->DAT38, &BKP->DAT39, core_frame[7]);
@@ -904,12 +1079,31 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 		AppDiagnostics_Write32(&BKP->DAT36, &BKP->DAT37, 0U);
 		AppDiagnostics_Write32(&BKP->DAT38, &BKP->DAT39, 0U);
 	}
+	for (index = 0U; index < APP_DIAG_BASIC_FRAME_WORDS; index++)
+	{
+		if (frame_valid != 0U)
+		{
+			s_fault_snapshot->stacked[index] = core_frame[index];
+			s_fault_snapshot->frame_before[index] = (core_frame - 8)[index];
+			s_fault_snapshot->frame_after[index] =
+				core_frame[index + APP_DIAG_BASIC_FRAME_WORDS];
+		}
+		else
+		{
+			s_fault_snapshot->stacked[index] = 0U;
+			s_fault_snapshot->frame_before[index] = 0U;
+			s_fault_snapshot->frame_after[index] = 0U;
+		}
+	}
 	AppDiagnostics_Write32(&BKP->DAT40, &BKP->DAT41, exc_return);
 	__DMB();
+	s_fault_snapshot->magic = APP_FAULT_SNAPSHOT_MAGIC;
 	BKP->DAT3 = APP_DIAG_STAGE_FAULT;
 #else
 	(void)fault_type;
 	(void)stack_frame;
+	(void)msp;
+	(void)psp;
 	(void)exc_return;
 #endif
 }
@@ -2194,8 +2388,6 @@ static uint8_t EventQueue_Pop(AppEvent_t *event)
 static void App_HandleEvent(AppEvent_t event)
 {
 	APP_DIAG_RECORD_EVENT(event);
-	LOG_I("t=%u event=%s state=%s", s_system_tick_ms,
-	      App_EventName(event), App_StateName(s_app.state));
 
 	/* Charger events update power presence without interrupting active work. */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
@@ -2338,8 +2530,8 @@ static void App_HandleEvent(AppEvent_t event)
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				s_ui.selected_channel = (uint8_t)!s_ui.selected_channel;
-				LOG_I("t=%u selected channel=%u", s_system_tick_ms,
-				      (uint8_t)(s_ui.selected_channel + 1U));
+				// LOG_I("t=%u selected channel=%u", s_system_tick_ms,
+				//       (uint8_t)(s_ui.selected_channel + 1U));
 			}
 			else if ((s_app.state == APP_STATE_PRESSURE) &&
 			         (s_ui.charger_connected == 0U))
@@ -2367,9 +2559,9 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power)++;
 				}
-				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=ON",
-				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
-				      (uint8_t)(s_ui.formula + 1U), *power);
+				// LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=ON",
+				//       s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
+				//       (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
 			}
 			break;
@@ -2384,9 +2576,9 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					(*power)--;
 				}
-				LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=ON",
-				      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
-				      (uint8_t)(s_ui.formula + 1U), *power);
+				// LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=ON",
+				//       s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
+				//       (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
 			}
 			break;
@@ -4354,8 +4546,6 @@ static void AppEvent_Task10ms(void)
 
 static void Control_Task10ms(void)
 {
-	static uint8_t previous_pwr1;
-	static uint8_t previous_pwr2;
 	uint8_t pwr1_was_active;
 	uint8_t pwr2_was_active;
 	uint8_t output_allowed;
@@ -4436,31 +4626,6 @@ static void Control_Task10ms(void)
 			}
 		}
 	}
-
-	if ((previous_pwr1 == 0U) && (Pwr1 != 0U))
-	{
-		LOG_I("t=%u treatment start ch=1 mode=P%u level=%u timer=TIM1 pins=PA8/PA9 dac=ON",
-		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U), Pwr1);
-	}
-	else if ((previous_pwr1 != 0U) && (Pwr1 == 0U))
-	{
-		LOG_I("t=%u treatment stop ch=1 mode=P%u timer=TIM1 dac=ON",
-		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U));
-	}
-
-	if ((previous_pwr2 == 0U) && (Pwr2 != 0U))
-	{
-		LOG_I("t=%u treatment start ch=2 mode=P%u level=%u timer=TIM8 pins=PA7/PB0 dac=ON",
-		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U), Pwr2);
-	}
-	else if ((previous_pwr2 != 0U) && (Pwr2 == 0U))
-	{
-		LOG_I("t=%u treatment stop ch=2 mode=P%u timer=TIM8 dac=ON",
-		      s_system_tick_ms, (uint8_t)(s_ui.formula + 1U));
-	}
-
-	previous_pwr1 = Pwr1;
-	previous_pwr2 = Pwr2;
 
 	if ((s_app.state == APP_STATE_PRESSURE) &&
 	    (s_pressure_process.state == PRESSURE_PROCESS_TESTING) &&
@@ -4569,6 +4734,8 @@ int main(void)
 	Board_Init();
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 	AppDiagnostics_Init();
+	AppDiagnostics_LogFaultSnapshot();
+	AppDiagnostics_InitStackSentinel();
 #endif
 	App_Init();
 	LowPower_Init(software_reset);
