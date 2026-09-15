@@ -26,6 +26,7 @@ extern "C" {
 #include "stdbool.h"
 #include "stdio.h"
 
+/* BATEN 高电平使能，低电平关闭。 */
 #define BATEN_ON 							GPIO_WriteBit(BATEN_PORT,BATEN_PIN,Bit_SET)
 #define BATEN_OFF 						GPIO_WriteBit(BATEN_PORT,BATEN_PIN,Bit_RESET)
 

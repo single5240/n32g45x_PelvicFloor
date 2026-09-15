@@ -64,8 +64,6 @@ void RCC_Configuration(void)
     /* Treatment PWM timer */
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_TIM1, ENABLE);
     RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_TIM8, ENABLE);
-    /* TIM2 clock enable */
-    RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM2, ENABLE);
 #if (BUZZER_OUTPUT_ENABLE != 0U)
     /* TIM3 clock enable */
     RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_TIM3, ENABLE);
@@ -539,12 +537,6 @@ void NVIC_Configuration(void)
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-    /* Enable the TIM2 global Interrupt */
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM2_IRQn;
-//    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
-//    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
-//    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
     /* Enable the USART2 Interrupt */
     NVIC_InitStructure.NVIC_IRQChannel            = USART2_IRQn;

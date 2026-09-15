@@ -611,8 +611,12 @@ static void LowPower_Init(uint8_t software_reset);
 static void LowPower_Task(void);
 static uint8_t LowPower_EnterStop0(void);
 static uint8_t LowPower_TakeWakeSources(void);
+static void LowPower_PeripheralsSuspend(void);
+static void LowPower_PeripheralsRestore(void);
 static void Treatment_StopOutputs(void);
 static void Treatment_CancelSession(void);
+static void Treatment_DacDisableForStop0(void);
+static void Treatment_DacReprepareForOperation(void);
 static void Treatment_PauseSession(uint32_t now_ms);
 static void Treatment_CompleteSession(TherapyEndType_t end_type);
 static void Pressure_StopOutputs(void);
@@ -1325,6 +1329,28 @@ static void Treatment_StopOutputs(void)
 	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
 }
 
+/* STOP0 前关闭两路 DAC 及其中断触发源，消除其模拟偏置对 STOP0 电流的影响。
+ * DAC 通道在开机路径 Treatment_DacReprepareForOperation() 中恢复。 */
+static void Treatment_DacDisableForStop0(void)
+{
+	DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
+	DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
+	TIM_Enable(TIM6, DISABLE);
+	DAC_Enable(DAC_CHANNEL_1, DISABLE);
+	DAC_Enable(DAC_CHANNEL_2, DISABLE);
+}
+
+/* 冷启动 Board_Init() 与 STOP0 唤醒后的开机路径共用此恢复入口。
+ * DAC_ChannelConfig() 本身幂等：开启构建会重建 DAC 并清零输出，关闭构建会再次禁用。 */
+static void Treatment_DacReprepareForOperation(void)
+{
+	DAC_ChannelConfig();
+#if (TREATMENT_DAC_OUTPUT_ENABLE != 0U)
+	TIM6_Configuration();
+	TIM_Enable(TIM6, ENABLE);
+#endif
+}
+
 static void Treatment_CancelSession(void)
 {
 	s_therapy_session.active = 0U;
@@ -1489,6 +1515,111 @@ static uint8_t LowPower_TakeWakeSources(void)
 	return wake_sources;
 }
 
+/* STOP0 keeps GPIO state and peripheral registers. Explicitly stop and reset
+ * every non-wakeup peripheral so analog blocks, peripheral clocks and external
+ * interface pins cannot add static current while the MCU is sleeping. */
+static void LowPower_PeripheralsSuspend(void)
+{
+	GPIO_InitType gpio_init;
+
+	/* Stop interrupt sources before resetting or gating their clocks. */
+	USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
+	USART_ConfigInt(USART2, USART_INT_RXDNE, DISABLE);
+	USART_ConfigInt(USART2, USART_INT_ERRF, DISABLE);
+	USART_Enable(USART2, DISABLE);
+	NVIC_ClearPendingIRQ(USART2_IRQn);
+
+	TIM_ConfigInt(TIM1, TIM_INT_CC3, DISABLE);
+	TIM_ConfigInt(TIM8, TIM_INT_CC3, DISABLE);
+	TIM_EnableCtrlPwmOutputs(TIM1, DISABLE);
+	TIM_EnableCtrlPwmOutputs(TIM8, DISABLE);
+	TIM_Enable(TIM1, DISABLE);
+	TIM_Enable(TIM8, DISABLE);
+	TIM_Enable(TIM3, DISABLE);
+	TIM_Enable(TIM4, DISABLE);
+
+	Treatment_DacDisableForStop0();
+	ADC_Enable(ADC1, DISABLE);
+	ADC_Enable(ADC2, DISABLE);
+
+	/* Bridge, buzzer and motor controls must remain at their confirmed inactive
+	 * low level. Do not leave safety-critical external controls floating. */
+	GPIO_ResetBits(GPIOA, IN2L_PIN | IN1L_PIN | IN1R_PIN);
+	GPIO_ResetBits(GPIOB, IN2R_PIN | BUZZ_PIN | MOTOEN_PIN);
+	GPIO_InitStruct(&gpio_init);
+	gpio_init.GPIO_Mode = GPIO_Mode_Out_PP;
+	gpio_init.GPIO_Speed = GPIO_Speed_50MHz;
+	gpio_init.Pin = IN2L_PIN | IN1L_PIN | IN1R_PIN;
+	GPIO_InitPeripheral(GPIOA, &gpio_init);
+	gpio_init.Pin = IN2R_PIN | BUZZ_PIN | MOTOEN_PIN;
+	GPIO_InitPeripheral(GPIOB, &gpio_init);
+
+	/* Release interfaces connected to the disabled BLE module and remove pulls
+	 * from keys that are not STOP0 wake sources. PB10/PB11/PB15 are retained. */
+	gpio_init.GPIO_Mode = GPIO_Mode_AIN;
+	gpio_init.Pin = PB_SS_PIN | PB_PWRM_PIN;
+	GPIO_InitPeripheral(GPIOA, &gpio_init);
+	gpio_init.Pin = TX_PIN | RX_PIN | BLESTA_PIN | PB_FUN_PIN | PB_PWRP_PIN;
+	GPIO_InitPeripheral(GPIOB, &gpio_init);
+
+	TIM_DeInit(TIM1);
+	TIM_DeInit(TIM8);
+	TIM_DeInit(TIM3);
+	TIM_DeInit(TIM4);
+	TIM_DeInit(TIM6);
+	USART_DeInit(USART2);
+	ADC_DeInit(ADC1);
+	ADC_DeInit(ADC2);
+	DAC_DeInit();
+
+	RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_DAC |
+	                        RCC_APB1_PERIPH_TIM3 |
+	                        RCC_APB1_PERIPH_TIM4 |
+	                        RCC_APB1_PERIPH_TIM6 |
+	                        RCC_APB1_PERIPH_USART2, DISABLE);
+	RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_TIM1 |
+	                        RCC_APB2_PERIPH_TIM8 |
+	                        RCC_APB2_PERIPH_GPIOA |
+	                        RCC_APB2_PERIPH_GPIOC |
+	                        RCC_APB2_PERIPH_GPIOD, DISABLE);
+	RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_ADC1 |
+	                       RCC_AHB_PERIPH_ADC2, DISABLE);
+	if (s_iwdg_active == 0U)
+	{
+		RCC_EnableLsi(DISABLE);
+	}
+
+	/* TIM3 has been reset; force normal UI startup to configure it again. */
+	s_ui.buzzer_initialized = 0U;
+}
+
+/* Restore the digital peripherals needed during the post-wakeup processing.
+ * DAC channels and TIM6 deliberately remain disabled until the BOOTING path. */
+static void LowPower_PeripheralsRestore(void)
+{
+	RCC_EnableAPB2PeriphClk(RCC_APB2_PERIPH_GPIOA |
+	                        RCC_APB2_PERIPH_GPIOC |
+	                        RCC_APB2_PERIPH_GPIOD |
+	                        RCC_APB2_PERIPH_TIM1 |
+	                        RCC_APB2_PERIPH_TIM8, ENABLE);
+	RCC_EnableAPB1PeriphClk(RCC_APB1_PERIPH_DAC |
+	                        RCC_APB1_PERIPH_TIM3 |
+	                        RCC_APB1_PERIPH_TIM4 |
+	                        RCC_APB1_PERIPH_TIM6 |
+	                        RCC_APB1_PERIPH_USART2, ENABLE);
+	RCC_EnableAHBPeriphClk(RCC_AHB_PERIPH_ADC1 |
+	                       RCC_AHB_PERIPH_ADC2, ENABLE);
+
+	GPIO_Configuration();
+	TIM1_Configuration();
+	TIM8_Configuration();
+	TIM4_Configuration();
+	USART2_Configuration();
+	NVIC_ClearPendingIRQ(TIM1_CC_IRQn);
+	NVIC_ClearPendingIRQ(TIM8_CC_IRQn);
+	NVIC_ClearPendingIRQ(USART2_IRQn);
+}
+
 static uint8_t LowPower_EnterStop0(void)
 {
 	uint32_t saved_iser[8];
@@ -1498,9 +1629,10 @@ static uint8_t LowPower_EnterStop0(void)
 	uint32_t exti_irq_word = ((uint32_t)EXTI15_10_IRQn >> 5U);
 	uint32_t exti_irq_mask = (1UL << ((uint32_t)EXTI15_10_IRQn & 0x1FU));
 	uint8_t clock_restored;
+	const char *stop_mode = (APP_STOP2_ENABLE != 0U) ? "STOP2" : "STOP0";
 
 	Board_EnterSafeState();
-	LOG_I("t=%u entering STOP0", s_system_tick_ms);
+	LOG_I("t=%u entering %s", s_system_tick_ms, stop_mode);
 
 	primask = __get_PRIMASK();
 	__disable_irq();
@@ -1539,8 +1671,18 @@ static uint8_t LowPower_EnterStop0(void)
 	__DSB();
 	__ISB();
 
+	LowPower_PeripheralsSuspend();
+
+#if (APP_STOP2_ENABLE != 0U)
+	PWR_EnterSTOP2Mode(PWR_STOPENTRY_WFI);
+#else
 	PWR_EnterStopState(PWR_REGULATOR_LOWPOWER, PWR_STOPENTRY_WFI);
+#endif
 	clock_restored = Clock_RestoreAfterStop0();
+	if (clock_restored != 0U)
+	{
+		LowPower_PeripheralsRestore();
+	}
 
 	/* Rebuild the 1 ms time base before allowing any application ISR to run. */
 	SysTick->LOAD = (SystemCoreClock / 1000U) - 1U;
@@ -1558,14 +1700,14 @@ static uint8_t LowPower_EnterStop0(void)
 
 	if (clock_restored == 0U)
 	{
-		LOG_E("t=%u STOP0 clock restore failed, core=%u Hz",
-		      s_system_tick_ms, SystemCoreClock);
+		LOG_E("t=%u %s clock restore failed, core=%u Hz",
+		      s_system_tick_ms, stop_mode, SystemCoreClock);
 		App_RequestState(APP_STATE_FAULT);
 		App_ApplyStateTransition();
 		return 0U;
 	}
 
-	LOG_I("t=%u STOP0 wake, core=%u Hz", s_system_tick_ms, SystemCoreClock);
+	LOG_I("t=%u %s wake, core=%u Hz", s_system_tick_ms, stop_mode, SystemCoreClock);
 	return 1U;
 }
 
@@ -2041,6 +2183,8 @@ static void App_StateEnter(AppState_t state)
 			 */
 			/* POWER_OFF and CHARGING are already safe source states. Keep BLEN
 			 * stable here so charge-to-work startup does not pulse the backlight off. */
+			/* 从 STOP0 唤醒开机时恢复两路 DAC 与 TIM6 触发；冷启动重复调用幂等。 */
+			Treatment_DacReprepareForOperation();
 			Ui_InitModel();
 			if (s_battery.session_active == 0U)
 			{
@@ -2634,6 +2778,12 @@ static void Ui_Shutdown(void)
 	if (s_ui.lcd_initialized != 0U)
 	{
 		Alloff_LCD();
+		comm_LCD(0x80, 0x40); /* LCD OFF: disable LCD bias generator. */
+		comm_LCD(0x80, 0x00); /* SYS DIS: stop oscillator and bias generator. */
+		TM1621C_CS_ON;
+		TM1621C_CLK_OFF;
+		TM1621C_DATA_OFF;
+		s_ui.lcd_initialized = 0U;
 	}
 }
 
@@ -4777,7 +4927,7 @@ int main(void)
 		}
 		LowPower_Task();
 
-		/* 等待下一次中断，避免空转占满 CPU */
-		__WFI();
+		/* 普通空闲固定使用硬延时；STOP0 入口内部仍使用 WFI 指令。 */
+		Delay1ms(1U);
 	}
 }

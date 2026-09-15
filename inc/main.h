@@ -243,6 +243,9 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 /* Keep a recovery/download window before POWER_OFF enters STOP0. */
 #define APP_STOP0_ENABLE                      1U
 #define APP_STOP0_ENTRY_DELAY_MS              10000UL
+/* Low-power sleep mode: 0=STOP0 (default, proven), 1=STOP2 (deeper sleep).
+ * STOP2 requires bench verification of wake/charge paths before mass default. */
+#define APP_STOP2_ENABLE                      0U
 /* Keep cooperative tasks alive long enough for the shutdown beeps to finish. */
 #define APP_POWER_OFF_BEEP_DELAY_MS            2000UL
 /* Diagnostic gate: keep the buzzer timer and PB1 output disabled when 0. */
@@ -267,6 +270,10 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 #if (APP_STOP0_ENABLE > 1U)
 #error "APP_STOP0_ENABLE must be 0 or 1"
+#endif
+
+#if (APP_STOP2_ENABLE > 1U)
+#error "APP_STOP2_ENABLE must be 0 or 1"
 #endif
 
 #if (APP_STOP0_ENTRY_DELAY_MS < 1000UL)
