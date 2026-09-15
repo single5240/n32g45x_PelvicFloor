@@ -288,7 +288,6 @@ void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
 void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled);
 void App_FaultSafeShutdownISR(void);
 void App_BleRxByteISR(uint8_t data);
-void App_BleTxReadyISR(void);
 void App_BleUsartErrorISR(uint8_t error_flags);
 void App_LowPowerWakeISR(uint8_t wake_sources);
 

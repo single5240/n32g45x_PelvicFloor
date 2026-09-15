@@ -351,6 +351,8 @@ typedef enum
 #define BLE_NAME_LENGTH             (BLE_NAME_PREFIX_LENGTH + BLE_MAC_TEXT_LENGTH)
 #define BLE_POWERUP_WAIT_MS         500U
 #define BLE_AT_RESPONSE_TIMEOUT_MS  1000U
+#define BLE_TX_WAIT_TIMEOUT_MS      2U
+#define BLE_TX_PROCESS_BUDGET_BYTES 38U
 #define BLE_RESET_DELAY_MS          100U
 #define BLE_AT_MAX_RETRY_COUNT      3U
 #define BLE_STA_STARTUP_CHECK_MS    1500U
@@ -502,6 +504,7 @@ typedef struct
 {
 	uint32_t rx_bytes;
 	uint32_t tx_bytes;
+	uint32_t tx_timeouts;
 	uint32_t rx_ring_overflows;
 	uint32_t usart_overruns;
 	uint32_t usart_frame_errors;
@@ -1176,39 +1179,6 @@ void App_BleRxByteISR(uint8_t data)
 
 	s_ble_rx_buffer[s_ble_rx_write_index] = data;
 	s_ble_rx_write_index = next_index;
-}
-
-void App_BleTxReadyISR(void)
-{
-	uint8_t data;
-
-	if ((s_ble_name.tx_data != 0) &&
-	    (s_ble_name.tx_index < s_ble_name.tx_length))
-	{
-		USART_SendData(USART2,
-		               (uint16_t)(uint8_t)s_ble_name.tx_data[s_ble_name.tx_index]);
-		s_ble_comm_counters.tx_bytes++;
-		s_ble_name.tx_index++;
-		if (s_ble_name.tx_index >= s_ble_name.tx_length)
-		{
-			USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
-		}
-		return;
-	}
-
-	if ((s_ble_name.protocol_active != 0U) &&
-	    (BleProtocol_ReadTxByte(&data) != 0U))
-	{
-		USART_SendData(USART2, data);
-		s_ble_comm_counters.tx_bytes++;
-		if (BleProtocol_HasTxData() == 0U)
-		{
-			USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
-		}
-		return;
-	}
-
-	USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
 }
 
 void App_BleUsartErrorISR(uint8_t error_flags)
@@ -3835,8 +3805,6 @@ static void BleName_SendCommand(const char *command, uint8_t length,
 	s_ble_name.tx_index = 0U;
 	s_ble_name.deadline_ms = 0U;
 	s_ble_name.state = wait_state;
-	USART_ConfigInt(USART2, USART_INT_TXDE, ENABLE);
-
 	if (wait_state == BLE_NAME_WAIT_MAC)
 	{
 		LOG_I("t=%u BLE AT TX: query MAC", s_system_tick_ms);
@@ -4093,12 +4061,54 @@ static void BleProtocol_RxTask10ms(void)
 
 static void BleProtocol_TxTask(void)
 {
-	if ((s_ble_name.protocol_active == 0U) ||
-	    (BleProtocol_HasTxData() == 0U))
+	uint8_t data;
+	uint8_t sent_bytes;
+	uint32_t wait_start_ms;
+
+	if (((s_ble_name.tx_data == 0) ||
+	     (s_ble_name.tx_index >= s_ble_name.tx_length)) &&
+	    ((s_ble_name.protocol_active == 0U) ||
+	     (BleProtocol_HasTxData() == 0U)))
 	{
 		return;
 	}
-	USART_ConfigInt(USART2, USART_INT_TXDE, ENABLE);
+
+	/* A protocol frame is at most 38 bytes. Wait for TXDE before each write,
+	 * but retain the current source/index and return on timeout so a stuck UART
+	 * cannot block the control loop indefinitely. */
+	for (sent_bytes = 0U; sent_bytes < BLE_TX_PROCESS_BUDGET_BYTES;
+	     sent_bytes++)
+	{
+		wait_start_ms = s_system_tick_ms;
+		while (USART_GetFlagStatus(USART2, USART_FLAG_TXDE) == RESET)
+		{
+			if ((uint32_t)(s_system_tick_ms - wait_start_ms) >=
+			    BLE_TX_WAIT_TIMEOUT_MS)
+			{
+				s_ble_comm_counters.tx_timeouts++;
+				return;
+			}
+		}
+
+		if ((s_ble_name.tx_data != 0) &&
+		    (s_ble_name.tx_index < s_ble_name.tx_length))
+		{
+			USART_SendData(USART2,
+			               (uint16_t)(uint8_t)s_ble_name.tx_data[s_ble_name.tx_index]);
+			s_ble_name.tx_index++;
+		}
+		else if ((s_ble_name.protocol_active != 0U) &&
+		         (BleProtocol_ReadTxByte(&data) != 0U))
+		{
+			USART_SendData(USART2, data);
+		}
+		else
+		{
+			return;
+		}
+
+		s_ble_comm_counters.tx_bytes++;
+	}
 }
 
 static void BleProtocol_StopAll(void)

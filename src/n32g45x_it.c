@@ -338,10 +338,6 @@ void USART2_IRQHandler(void)
     {
         (void)USART_ReceiveData(USART2);
     }
-    if (USART_GetIntStatus(USART2, USART_INT_TXDE) != RESET)
-    {
-        App_BleTxReadyISR();
-    }
     /* Complete peripheral/SRAM stores before exception return. */
     __DSB();
 }
