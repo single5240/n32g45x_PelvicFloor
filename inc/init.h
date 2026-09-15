@@ -52,13 +52,20 @@ extern "C" {
 
 #define MOTOR_PWM_FREQUENCY_HZ       10000U
 #define MOTOR_PWM_PERIOD_COUNTS      12800U
-#define MOTOR_PWM_TEST_DUTY_PERCENT  40U
-#define MOTOR_PWM_COMPARE_COUNTS     ((MOTOR_PWM_PERIOD_COUNTS * \
-                                      MOTOR_PWM_TEST_DUTY_PERCENT) / 100U)
+#define MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT   40U
+#define MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT    60U
+#define MOTOR_PWM_HIGH_VOLTAGE_MV           4200U
+#define MOTOR_PWM_LOW_VOLTAGE_MV            3500U
 
-#if (MOTOR_PWM_TEST_DUTY_PERCENT == 0U) || \
-    (MOTOR_PWM_TEST_DUTY_PERCENT > 100U)
-#error "MOTOR_PWM_TEST_DUTY_PERCENT must be within 1..100"
+#if (MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT == 0U) || \
+    (MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT > 100U) || \
+    (MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT == 0U) || \
+    (MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT > 100U)
+#error "Motor PWM duty must be within 1..100"
+#endif
+
+#if (MOTOR_PWM_LOW_VOLTAGE_MV >= MOTOR_PWM_HIGH_VOLTAGE_MV)
+#error "Motor PWM compensation voltage range is invalid"
 #endif
 
 #define READ_PB_MAIN					GPIO_ReadInputDataBit(PB_MAIN_PORT,PB_MAIN_PIN)
@@ -82,12 +89,12 @@ void TIM8_Configuration(void);
 void TIM6_Configuration(void);
 void USART2_Configuration(void);
 uint8_t IWDG_Configuration(void);
+uint8_t Clock_RestoreAfterStop0(void);
 void NVIC_Configuration(void);
 void DAC_ChannelConfig(void);
 //void E1countExtiInit(void);
 //void E2countExtiInit(void);
-void ChargExtiInit(void);
-void PBExtiInit(void);
+void LowPowerWakeExtiInit(void);
 uint8_t ADC1_Initial(void);
 uint8_t ADC2_Initial(void);
 uint8_t ADC_DisableSafe(ADC_Module* ADCx);

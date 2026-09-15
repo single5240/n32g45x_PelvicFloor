@@ -40,6 +40,8 @@
 #include "log_printf.h"
 #include "SEGGER_RTT.h"
 
+#define LOW_POWER_RESET_MARKER                 0x50F0U
+
 // LCD数字数组
 const uint8_t NUM1[] = {0xaf, 0x06, 0x6d, 0x4f, 0xc6, 0xcb, 0xeb, 0x0e, 0xef, 0xcf, 0x00};
 const uint8_t NUM2[] = {0x5f, 0x06, 0x3d, 0x2f, 0x66, 0x6b, 0x7b, 0x0e, 0x7f, 0x6f, 0x00};
@@ -325,6 +327,8 @@ typedef enum
 #define BATTERY_LOW_ENTER_MV              3500U
 #define BATTERY_LOW_EXIT_MV               3600U
 #define BATTERY_LOW_CONFIRM_COUNT         3U
+#define BATTERY_PERCENT_DEADBAND          2U
+#define BATTERY_PERCENT_CONFIRM_COUNT     3U
 
 /* Pressure sensor: PA2 / ADC2 channel 11. Temporary nominal calibration. */
 #define PRESSURE_ADC_SAMPLE_PERIOD_MS      200U
@@ -407,6 +411,8 @@ typedef struct
 	uint8_t valid;
 	uint8_t level;
 	uint8_t percent;
+	uint8_t percent_candidate;
+	uint8_t percent_confirm_count;
 	uint8_t low_battery;
 	uint8_t low_confirm_count;
 	uint8_t recover_confirm_count;
@@ -532,6 +538,12 @@ static BleStaContext_t s_ble_sta;
 static TherapySessionContext_t s_therapy_session;
 static volatile BleCommCounters_t s_ble_comm_counters;
 static uint8_t s_iwdg_active;
+static uint8_t s_iwdg_start_failed;
+static uint8_t s_iwdg_software_selected;
+static uint8_t s_stop0_option_ready;
+static uint8_t s_stop0_option_warning_logged;
+static uint32_t s_power_off_since_ms;
+static volatile uint8_t s_low_power_wake_sources;
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 static AppDiagSnapshot_t s_diag_previous;
 static uint8_t s_diag_tick_divider;
@@ -545,12 +557,18 @@ static uint8_t s_charger_debounce_count;
 static void Board_Init(void);
 static void Core_ApplyErrataWorkarounds(void);
 static void Board_EnterSafeState(void);
+static void Watchdog_StartIfRequired(void);
+static void LowPower_Init(uint8_t software_reset);
+static void LowPower_Task(void);
+static uint8_t LowPower_EnterStop0(void);
+static uint8_t LowPower_TakeWakeSources(void);
 static void Treatment_StopOutputs(void);
 static void Treatment_CancelSession(void);
 static void Treatment_PauseSession(uint32_t now_ms);
 static void Treatment_CompleteSession(TherapyEndType_t end_type);
 static void Pressure_StopOutputs(void);
 static void Pressure_ApplyOutputs(void);
+static uint16_t Pressure_GetMotorPwmCompareCounts(void);
 static void Pressure_ResetProcess(void);
 static void Pressure_StartInflating(void);
 static void Pressure_StartDeflating(void);
@@ -604,6 +622,7 @@ static uint16_t Battery_CalculateVoltageMv(uint16_t battery_adc,
                                           uint16_t reference_adc);
 static uint8_t Battery_CalculateLevel(uint16_t voltage_mv);
 static uint8_t Battery_CalculatePercent(uint16_t voltage_mv);
+static void Battery_UpdatePercent(uint8_t calculated_percent);
 static void Battery_UpdateLowState(uint16_t voltage_mv);
 static void Battery_ProcessMeasurement(uint16_t battery_adc,
                                        uint16_t reference_adc);
@@ -1034,6 +1053,7 @@ static void Board_Init(void)
 	TIM4_Configuration();
 	USART2_Configuration();
 	NVIC_Configuration();
+	LowPowerWakeExtiInit();
 	SEGGER_RTT_Init();
 	LOG_I("t=%u system init, core=%u Hz cpuid=0x%08x actlr=0x%08x err838869=%u",
 	      s_system_tick_ms, SystemCoreClock, SCB->CPUID, SCnSCB->ACTLR,
@@ -1191,6 +1211,229 @@ static void Treatment_CompleteSession(TherapyEndType_t end_type)
 	}
 }
 
+void App_LowPowerWakeISR(uint8_t wake_sources)
+{
+	s_low_power_wake_sources |= wake_sources;
+}
+
+static void Watchdog_StartIfRequired(void)
+{
+#if (APP_IWDG_ENABLE != 0U)
+	if ((s_iwdg_active != 0U) || (s_iwdg_start_failed != 0U))
+	{
+		return;
+	}
+
+	/* With software IWDG selected, keep it stopped during the POWER_OFF
+	 * recovery window and STOP0. It is started before powered operation. */
+#if (APP_STOP0_ENABLE != 0U)
+	if ((s_app.state == APP_STATE_POWER_OFF) &&
+	    (s_iwdg_software_selected != 0U))
+	{
+		return;
+	}
+#endif
+
+	s_iwdg_active = IWDG_Configuration();
+	if (s_iwdg_active != 0U)
+	{
+		LOG_I("t=%u IWDG enabled, nominal timeout=2000 ms", s_system_tick_ms);
+	}
+	else
+	{
+		s_iwdg_start_failed = 1U;
+		LOG_E("t=%u IWDG initialization failed", s_system_tick_ms);
+		App_RequestState(APP_STATE_FAULT);
+		App_ApplyStateTransition();
+	}
+#endif
+}
+
+static void LowPower_Init(uint8_t software_reset)
+{
+	uint32_t user_ob = FLASH_GetUserOB();
+	uint16_t reset_marker = BKP->DAT42;
+
+	BKP->DAT42 = 0U;
+	if ((software_reset != 0U) &&
+	    (reset_marker == LOW_POWER_RESET_MARKER))
+	{
+		/* The preceding powered session already waited for the shutdown beep. */
+		s_power_off_since_ms = s_system_tick_ms - APP_STOP0_ENTRY_DELAY_MS;
+	}
+	else
+	{
+		s_power_off_since_ms = s_system_tick_ms;
+	}
+	s_low_power_wake_sources = 0U;
+	s_iwdg_software_selected = ((user_ob & OB_IWDG_SW) != 0U) ? 1U : 0U;
+	s_stop0_option_ready = ((s_iwdg_software_selected != 0U) &&
+	                        ((user_ob & OB_STOP0_NORST) != 0U)) ? 1U : 0U;
+	LOG_I("t=%u STOP0 config enable=%u delay=%u ms marker=%u user_ob=0x%02x ready=%u",
+	      s_system_tick_ms, (uint8_t)APP_STOP0_ENABLE,
+	      (uint32_t)APP_STOP0_ENTRY_DELAY_MS,
+	      ((software_reset != 0U) &&
+	       (reset_marker == LOW_POWER_RESET_MARKER)) ? 1U : 0U,
+	      (uint8_t)user_ob,
+	      s_stop0_option_ready);
+}
+
+static uint8_t LowPower_TakeWakeSources(void)
+{
+	uint32_t primask = __get_PRIMASK();
+	uint8_t wake_sources;
+
+	__disable_irq();
+	wake_sources = s_low_power_wake_sources;
+	s_low_power_wake_sources = 0U;
+	if (primask == 0U)
+	{
+		__enable_irq();
+	}
+	return wake_sources;
+}
+
+static uint8_t LowPower_EnterStop0(void)
+{
+	uint32_t saved_iser[8];
+	uint32_t saved_systick_ctrl;
+	uint32_t primask;
+	uint32_t index;
+	uint32_t exti_irq_word = ((uint32_t)EXTI15_10_IRQn >> 5U);
+	uint32_t exti_irq_mask = (1UL << ((uint32_t)EXTI15_10_IRQn & 0x1FU));
+	uint8_t clock_restored;
+
+	Board_EnterSafeState();
+	LOG_I("t=%u entering STOP0", s_system_tick_ms);
+
+	primask = __get_PRIMASK();
+	__disable_irq();
+	for (index = 0U; index < 8U; index++)
+	{
+		saved_iser[index] = NVIC->ISER[index];
+		NVIC->ICER[index] = 0xFFFFFFFFUL;
+	}
+	NVIC->ISER[exti_irq_word] = exti_irq_mask;
+
+	EXTI_ClrITPendBit(EXTI_LINE10 | EXTI_LINE11 | EXTI_LINE15);
+	NVIC_ClearPendingIRQ(EXTI15_10_IRQn);
+
+	/* Recheck stable wake levels inside the critical section. An edge after
+	 * this point remains pending and releases WFI. */
+	if ((s_low_power_wake_sources != 0U) ||
+	    (READ_PB_MAIN != Bit_RESET) ||
+	    (READ_CHARG == Bit_RESET) ||
+	    (READ_STDBY == Bit_RESET))
+	{
+		for (index = 0U; index < 8U; index++)
+		{
+			NVIC->ICER[index] = 0xFFFFFFFFUL;
+			NVIC->ISER[index] = saved_iser[index];
+		}
+		if (primask == 0U)
+		{
+			__enable_irq();
+		}
+		return 0U;
+	}
+
+	saved_systick_ctrl = SysTick->CTRL;
+	SysTick->CTRL &= ~(SysTick_CTRL_ENABLE_Msk | SysTick_CTRL_TICKINT_Msk);
+	SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk;
+	__DSB();
+	__ISB();
+
+	PWR_EnterStopState(PWR_REGULATOR_LOWPOWER, PWR_STOPENTRY_WFI);
+	clock_restored = Clock_RestoreAfterStop0();
+
+	/* Rebuild the 1 ms time base before allowing any application ISR to run. */
+	SysTick->LOAD = (SystemCoreClock / 1000U) - 1U;
+	SysTick->VAL = 0U;
+	SysTick->CTRL = saved_systick_ctrl;
+	for (index = 0U; index < 8U; index++)
+	{
+		NVIC->ICER[index] = 0xFFFFFFFFUL;
+		NVIC->ISER[index] = saved_iser[index];
+	}
+	if (primask == 0U)
+	{
+		__enable_irq();
+	}
+
+	if (clock_restored == 0U)
+	{
+		LOG_E("t=%u STOP0 clock restore failed, core=%u Hz",
+		      s_system_tick_ms, SystemCoreClock);
+		App_RequestState(APP_STATE_FAULT);
+		App_ApplyStateTransition();
+		return 0U;
+	}
+
+	LOG_I("t=%u STOP0 wake, core=%u Hz", s_system_tick_ms, SystemCoreClock);
+	return 1U;
+}
+
+static void LowPower_Task(void)
+{
+#if (APP_STOP0_ENABLE != 0U)
+	uint8_t wake_sources = LowPower_TakeWakeSources();
+
+	if (s_app.state != APP_STATE_POWER_OFF)
+	{
+		s_power_off_since_ms = s_system_tick_ms;
+		return;
+	}
+
+	if (wake_sources != 0U)
+	{
+		s_power_off_since_ms = s_system_tick_ms;
+		LOG_I("t=%u low-power wake source=0x%02x", s_system_tick_ms,
+		      wake_sources);
+		return;
+	}
+
+	if ((READ_PB_MAIN != Bit_RESET) ||
+	    (READ_CHARG == Bit_RESET) ||
+	    (READ_STDBY == Bit_RESET))
+	{
+		s_power_off_since_ms = s_system_tick_ms;
+		return;
+	}
+
+	if ((uint32_t)(s_system_tick_ms - s_power_off_since_ms) <
+	    ((s_iwdg_active != 0U) ? APP_POWER_OFF_BEEP_DELAY_MS :
+	                              APP_STOP0_ENTRY_DELAY_MS))
+	{
+		return;
+	}
+
+	if (s_stop0_option_ready == 0U)
+	{
+		if (s_stop0_option_warning_logged == 0U)
+		{
+			s_stop0_option_warning_logged = 1U;
+			LOG_E("t=%u STOP0 blocked: require software IWDG and nRST_STOP=1",
+			      s_system_tick_ms);
+		}
+		return;
+	}
+
+	/* IWDG cannot be stopped after it starts. A powered session therefore
+	 * resets into the normal 10 s POWER_OFF window before reaching here. */
+	if (s_iwdg_active != 0U)
+	{
+		LOG_I("t=%u shutdown beep delay complete, reset before STOP0",
+		      s_system_tick_ms);
+		BKP->DAT42 = LOW_POWER_RESET_MARKER;
+		__DSB();
+		NVIC_SystemReset();
+	}
+
+	(void)LowPower_EnterStop0();
+	s_power_off_since_ms = s_system_tick_ms;
+#endif
+}
+
 static void Pressure_ResetProcess(void)
 {
 	s_pressure_process.state = PRESSURE_PROCESS_IDLE;
@@ -1314,6 +1557,43 @@ static void Pressure_StopOutputs(void)
 	}
 }
 
+static uint16_t Pressure_GetMotorPwmCompareCounts(void)
+{
+	uint16_t voltage_mv;
+	uint32_t duty_percent;
+
+	/* Keep the high-voltage duty until a valid filtered battery result exists. */
+	if (AppBattery_IsValid() == 0U)
+	{
+		duty_percent = MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT;
+	}
+	else
+	{
+		voltage_mv = AppBattery_GetVoltageMv();
+		if (voltage_mv <= MOTOR_PWM_LOW_VOLTAGE_MV)
+		{
+			duty_percent = MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT;
+		}
+		else if (voltage_mv >= MOTOR_PWM_HIGH_VOLTAGE_MV)
+		{
+			duty_percent = MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT;
+		}
+		else
+		{
+			duty_percent = MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT +
+			               (((uint32_t)(MOTOR_PWM_HIGH_VOLTAGE_MV - voltage_mv) *
+			                 (MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT -
+			                  MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT) +
+			                 ((MOTOR_PWM_HIGH_VOLTAGE_MV -
+			                   MOTOR_PWM_LOW_VOLTAGE_MV) / 2U)) /
+			                (MOTOR_PWM_HIGH_VOLTAGE_MV -
+			                 MOTOR_PWM_LOW_VOLTAGE_MV));
+		}
+	}
+
+	return (uint16_t)(((uint32_t)MOTOR_PWM_PERIOD_COUNTS * duty_percent) / 100U);
+}
+
 static void Pressure_ApplyOutputs(void)
 {
 	PressureAction_t requested_action = PRESSURE_ACTION_IDLE;
@@ -1336,7 +1616,7 @@ static void Pressure_ApplyOutputs(void)
 
 	if (requested_action == PRESSURE_ACTION_INFLATING)
 	{
-		TIM_SetCmp4(TIM4, MOTOR_PWM_COMPARE_COUNTS);
+		TIM_SetCmp4(TIM4, Pressure_GetMotorPwmCompareCounts());
 		TIM_GenerateEvent(TIM4, TIM_EVT_SRC_UPDATE);
 		TIM_SetCnt(TIM4, 0U);
 		TIM_EnableCapCmpCh(TIM4, TIM_CH_4, TIM_CAP_CMP_ENABLE);
@@ -2460,6 +2740,8 @@ static void Battery_InitModel(void)
 	s_battery.valid = 0U;
 	s_battery.level = 0U;
 	s_battery.percent = 0U;
+	s_battery.percent_candidate = 0U;
+	s_battery.percent_confirm_count = 0U;
 	s_battery.low_battery = 0U;
 	s_battery.low_confirm_count = 0U;
 	s_battery.recover_confirm_count = 0U;
@@ -2637,6 +2919,58 @@ static uint8_t Battery_CalculatePercent(uint16_t voltage_mv)
 	return (uint8_t)percent;
 }
 
+static void Battery_UpdatePercent(uint8_t calculated_percent)
+{
+	uint8_t difference;
+
+	/* Prevent load recovery and charger ripple from reversing the displayed
+	 * direction. The real filtered voltage still feeds the low-battery guard. */
+	if (((s_ui.charger_connected == 0U) &&
+	     (calculated_percent > s_battery.percent)) ||
+	    ((s_ui.charger_connected != 0U) &&
+	     (calculated_percent < s_battery.percent)))
+	{
+		s_battery.percent_candidate = s_battery.percent;
+		s_battery.percent_confirm_count = 0U;
+		return;
+	}
+
+	if (calculated_percent == s_battery.percent)
+	{
+		s_battery.percent_candidate = calculated_percent;
+		s_battery.percent_confirm_count = 0U;
+		return;
+	}
+
+	difference = (calculated_percent > s_battery.percent) ?
+	             (uint8_t)(calculated_percent - s_battery.percent) :
+	             (uint8_t)(s_battery.percent - calculated_percent);
+	if (difference < BATTERY_PERCENT_DEADBAND)
+	{
+		/* Ignore one-percent fluctuations in the BLE display value. */
+		s_battery.percent_candidate = calculated_percent;
+		s_battery.percent_confirm_count = 0U;
+		return;
+	}
+
+	if (calculated_percent != s_battery.percent_candidate)
+	{
+		s_battery.percent_candidate = calculated_percent;
+		s_battery.percent_confirm_count = 1U;
+	}
+	else if (s_battery.percent_confirm_count < BATTERY_PERCENT_CONFIRM_COUNT)
+	{
+		s_battery.percent_confirm_count++;
+	}
+
+	if (s_battery.percent_confirm_count >= BATTERY_PERCENT_CONFIRM_COUNT)
+	{
+		s_battery.percent = calculated_percent;
+		s_battery.percent_candidate = calculated_percent;
+		s_battery.percent_confirm_count = 0U;
+	}
+}
+
 static void Battery_UpdateLowState(uint16_t voltage_mv)
 {
 	if (voltage_mv <= BATTERY_LOW_ENTER_MV)
@@ -2705,7 +3039,16 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
 	}
 
 	s_battery.level = Battery_CalculateLevel(s_battery.voltage_mv);
-	s_battery.percent = Battery_CalculatePercent(s_battery.voltage_mv);
+	if (previous_valid == 0U)
+	{
+		s_battery.percent = Battery_CalculatePercent(s_battery.voltage_mv);
+		s_battery.percent_candidate = s_battery.percent;
+		s_battery.percent_confirm_count = 0U;
+	}
+	else
+	{
+		Battery_UpdatePercent(Battery_CalculatePercent(s_battery.voltage_mv));
+	}
 	Battery_UpdateLowState(s_battery.voltage_mv);
 	AppUi_SetBattery(s_battery.level, s_battery.low_battery);
 
@@ -4182,6 +4525,7 @@ int main(void)
 	uint8_t power_on_reset;
 	uint8_t pin_reset;
 	uint8_t low_power_reset;
+	uint8_t software_reset;
 	uint8_t control_cycle_completed;
 
 	watchdog_reset = (RCC_GetFlagStatus(RCC_FLAG_IWDGRST) != RESET) ? 1U : 0U;
@@ -4189,14 +4533,16 @@ int main(void)
 	power_on_reset = (RCC_GetFlagStatus(RCC_FLAG_PORRST) != RESET) ? 1U : 0U;
 	pin_reset = (RCC_GetFlagStatus(RCC_FLAG_PINRST) != RESET) ? 1U : 0U;
 	low_power_reset = (RCC_GetFlagStatus(RCC_FLAG_LPWRRST) != RESET) ? 1U : 0U;
+	software_reset = (RCC_GetFlagStatus(RCC_FLAG_SFTRST) != RESET) ? 1U : 0U;
 	Board_Init();
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 	AppDiagnostics_Init();
 #endif
 	App_Init();
-	LOG_I("t=%u reset flags iwdg=%u bor=%u por=%u pin=%u lpwr=%u",
+	LowPower_Init(software_reset);
+	LOG_I("t=%u reset flags iwdg=%u bor=%u por=%u pin=%u lpwr=%u sw=%u",
 	      s_system_tick_ms, watchdog_reset, brownout_reset, power_on_reset,
-	      pin_reset, low_power_reset);
+	      pin_reset, low_power_reset, software_reset);
 	if (watchdog_reset != 0U)
 	{
 		LOG_W("t=%u reset cause=IWDG", s_system_tick_ms);
@@ -4205,25 +4551,13 @@ int main(void)
 	AppDiagnostics_LogPrevious(watchdog_reset);
 #endif
 	RCC_ClrFlag();
-
-#if (APP_IWDG_ENABLE != 0U)
-	s_iwdg_active = IWDG_Configuration();
-	if (s_iwdg_active != 0U)
-	{
-		LOG_I("t=%u IWDG enabled, nominal timeout=2000 ms", s_system_tick_ms);
-	}
-	else
-	{
-		LOG_E("t=%u IWDG initialization failed", s_system_tick_ms);
-		App_RequestState(APP_STATE_FAULT);
-		App_ApplyStateTransition();
-	}
-#endif
+	Watchdog_StartIfRequired();
 	LOG_I("t=%u main loop started", s_system_tick_ms);
 
 	while (1)
 	{
 		control_cycle_completed = App_RunOnce();
+		Watchdog_StartIfRequired();
 		if ((s_iwdg_active != 0U) &&
 		    (control_cycle_completed != 0U))
 		{
@@ -4232,6 +4566,7 @@ int main(void)
 			IWDG_ReloadKey();
 			APP_DIAG_SET_STAGE(APP_DIAG_STAGE_WFI);
 		}
+		LowPower_Task();
 
 		/* 等待下一次中断，避免空转占满 CPU */
 		__WFI();

@@ -37,6 +37,7 @@
 
 #define IWDG_REGISTER_UPDATE_TIMEOUT 100000U
 #define IWDG_LSI_READY_TIMEOUT       100000U
+#define STOP0_CLOCK_READY_TIMEOUT    100000U
 
 /** @addtogroup
  * @{
@@ -655,56 +656,81 @@ void DAC_ChannelConfig(void)
 //    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
 //    NVIC_Init(&NVIC_InitStructure);
 //}
-void ChargExtiInit(void)
+void LowPowerWakeExtiInit(void)
 {
     EXTI_InitType EXTI_InitStructure;
     NVIC_InitType NVIC_InitStructure;
 
-    /* Check the parameters */
-    assert_param(IS_GPIO_ALL_PERIPH(GPIOx));
-
-    /*Configure key EXTI Line to key input Pin*/
+    /* PB10/PB11 are active-low charger status inputs. Both edges wake the
+     * application so insertion, charging/full transitions and release can be
+     * debounced from the stable GPIO levels after STOP0. */
     GPIO_ConfigEXTILine(GPIOB_PORT_SOURCE, GPIO_PIN_SOURCE10);
-
-    /*Configure key EXTI line*/
-    EXTI_InitStructure.EXTI_Line    = EXTI_LINE10;
+    GPIO_ConfigEXTILine(GPIOB_PORT_SOURCE, GPIO_PIN_SOURCE11);
+    EXTI_InitStructure.EXTI_Line    = EXTI_LINE10 | EXTI_LINE11;
     EXTI_InitStructure.EXTI_Mode    = EXTI_Mode_Interrupt;
-    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Falling; // EXTI_Trigger_Rising;
+    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising_Falling;
     EXTI_InitStructure.EXTI_LineCmd = ENABLE;
     EXTI_InitPeripheral(&EXTI_InitStructure);
 
-    /*Set key input interrupt priority*/
-    NVIC_InitStructure.NVIC_IRQChannel                   = EXTI15_10_IRQn;
-    NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0x05;
-    NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0x0F;
-    NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
-    NVIC_Init(&NVIC_InitStructure);
-}
-void PBExtiInit(void)
-{
-    EXTI_InitType EXTI_InitStructure;
-    NVIC_InitType NVIC_InitStructure;
-
-    /* Check the parameters */
-    assert_param(IS_GPIO_ALL_PERIPH(GPIOx));
-
-    /*Configure key EXTI Line to key input Pin*/
+    /* PB15 uses the existing pull-down/high-active power-key definition. */
     GPIO_ConfigEXTILine(GPIOB_PORT_SOURCE, GPIO_PIN_SOURCE15);
-
-    /*Configure key EXTI line*/
     EXTI_InitStructure.EXTI_Line    = EXTI_LINE15;
     EXTI_InitStructure.EXTI_Mode    = EXTI_Mode_Interrupt;
-    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising; // EXTI_Trigger_Falling;
+    EXTI_InitStructure.EXTI_Trigger = EXTI_Trigger_Rising;
     EXTI_InitStructure.EXTI_LineCmd = ENABLE;
     EXTI_InitPeripheral(&EXTI_InitStructure);
 
-    /*Set key input interrupt priority*/
+    EXTI_ClrITPendBit(EXTI_LINE10 | EXTI_LINE11 | EXTI_LINE15);
+    NVIC_ClearPendingIRQ(EXTI15_10_IRQn);
+
     NVIC_InitStructure.NVIC_IRQChannel                   = EXTI15_10_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0x05;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 0x0F;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
 }
+
+uint8_t Clock_RestoreAfterStop0(void)
+{
+    uint32_t timeout = STOP0_CLOCK_READY_TIMEOUT;
+
+    /* STOP0 resumes on HSI while the PLL configuration fields are retained. */
+    RCC_EnableHsi(ENABLE);
+    while (RCC_GetFlagStatus(RCC_FLAG_HSIRD) == RESET)
+    {
+        if (--timeout == 0U)
+        {
+            SystemCoreClockUpdate();
+            return 0U;
+        }
+    }
+
+    RCC_EnablePll(ENABLE);
+    timeout = STOP0_CLOCK_READY_TIMEOUT;
+    while (RCC_GetFlagStatus(RCC_FLAG_PLLRD) == RESET)
+    {
+        if (--timeout == 0U)
+        {
+            SystemCoreClockUpdate();
+            return 0U;
+        }
+    }
+
+    RCC_ConfigSysclk(RCC_SYSCLK_SRC_PLLCLK);
+    timeout = STOP0_CLOCK_READY_TIMEOUT;
+    while (RCC_GetSysclkSrc() != 0x08U)
+    {
+        if (--timeout == 0U)
+        {
+            SystemCoreClockUpdate();
+            return 0U;
+        }
+    }
+
+    SystemCoreClockUpdate();
+    return 1U;
+}
+
 uint8_t IWDG_Configuration(void)
 {
     uint32_t timeout = IWDG_LSI_READY_TIMEOUT;

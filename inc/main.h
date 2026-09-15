@@ -242,6 +242,11 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 /* With the nominal 40 kHz LSI and /32 prescaler, 2499 gives about 2 s. */
 #define APP_IWDG_ENABLE                       1U
 #define APP_IWDG_RELOAD_VALUE                 2499U
+/* Keep a recovery/download window before POWER_OFF enters STOP0. */
+#define APP_STOP0_ENABLE                      1U
+#define APP_STOP0_ENTRY_DELAY_MS              10000UL
+/* Keep cooperative tasks alive long enough for the shutdown beeps to finish. */
+#define APP_POWER_OFF_BEEP_DELAY_MS            2000UL
 /* Diagnostic gate: keep the buzzer timer and PB1 output disabled when 0. */
 #define BUZZER_OUTPUT_ENABLE                  1U
 /* ARM Cortex-M4 r0p0/r0p1 erratum 838869: disable the default write buffer. */
@@ -260,6 +265,18 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 #if (APP_IWDG_ENABLE > 1U)
 #error "APP_IWDG_ENABLE must be 0 or 1"
+#endif
+
+#if (APP_STOP0_ENABLE > 1U)
+#error "APP_STOP0_ENABLE must be 0 or 1"
+#endif
+
+#if (APP_STOP0_ENTRY_DELAY_MS < 1000UL)
+#error "APP_STOP0_ENTRY_DELAY_MS must leave at least 1 s for recovery"
+#endif
+
+#if (APP_POWER_OFF_BEEP_DELAY_MS < 500UL)
+#error "APP_POWER_OFF_BEEP_DELAY_MS must leave time for the shutdown beeps"
 #endif
 
 #if (APP_DIAGNOSTICS_ENABLE > 1U)
@@ -285,6 +302,11 @@ void App_FaultSafeShutdownISR(void);
 void App_BleRxByteISR(uint8_t data);
 void App_BleTxReadyISR(void);
 void App_BleUsartErrorISR(uint8_t error_flags);
+void App_LowPowerWakeISR(uint8_t wake_sources);
+
+#define APP_WAKE_SOURCE_CHARG                 0x01U
+#define APP_WAKE_SOURCE_STDBY                 0x02U
+#define APP_WAKE_SOURCE_POWER                 0x04U
 
 
 

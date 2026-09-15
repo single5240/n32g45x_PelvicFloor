@@ -44,7 +44,9 @@ Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时
 
 ## 3. 系统架构
 
-系统没有 RTOS。`SysTick_Handler()` 每 1 ms 只递增时基；主循环执行 `App_RunOnce()`，只有完整执行一次 10 ms 输入、通讯、事件、状态切换和控制链后才喂独立看门狗，空闲时通过 `__WFI()` 等待中断。这样主循环阻塞、系统时基停止或周期业务无法完成时都不会继续喂狗。SysTick、USART2 与治疗定时器处于同一抢占级，不会相互抢占治疗 ISR；同时挂起时 SysTick 和 USART2 的响应顺序高于治疗定时器，降低时基及蓝牙接收饥饿风险。IWDG 按 40 kHz LSI、32 分频和重装值 2499 配置，标称超时约 2 s。启动日志会输出 IWDG、BOR、POR、外部复位和低功耗复位标志，用于区分软件未喂狗与疑似供电复位。
+系统没有 RTOS。`SysTick_Handler()` 每 1 ms 只递增时基；主循环执行 `App_RunOnce()`，只有完整执行一次 10 ms 输入、通讯、事件、状态切换和控制链后才喂独立看门狗，普通空闲时通过 `__WFI()` 等待中断。这样主循环阻塞、系统时基停止或周期业务无法完成时都不会继续喂狗。软件启动型 IWDG 在 `POWER_OFF` 阶段保持未启动，进入充电或工作状态前才启动；其余配置仍为 40 kHz LSI、32 分频和重装值 2499，标称超时约 2 s。启动日志会输出 IWDG、BOR、POR、外部复位和低功耗复位标志，用于区分软件未喂狗与疑似供电复位。
+
+无充电器时每次物理上电默认进入 `POWER_OFF`，保留 10 s 下载和恢复窗口，期间电源键或 PB10/PB11 充电状态边沿会重新开始计时。窗口结束后通过 PB15/EXTI15、PB10/EXTI10、PB11/EXTI11 唤醒的 STOP0 降低功耗；唤醒后先恢复 HSI-PLL 产生的 128 MHz 时钟和 1 ms SysTick，再恢复其他 NVIC 中断。正常工作后 IWDG 已无法停止，因此再次关机时先立即关闭危险输出，继续运行蜂鸣器任务 2 s，再用 BKP DAT42 标记并受控复位；该标记仅在软件复位原因同时成立时有效，复位后不重复等待 10 s，直接进入 STOP0。STOP0 要求选项字节为软件 IWDG 且 `nRST_STOP=1`，条件不满足时仅记录错误并保持普通关机等待，不在运行时改写选项字节。
 
 为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次快照。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
 
@@ -77,7 +79,8 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 ### 压力与电池
 
 - ADC1 用于电池电压及 PA6 外部参考采样；ADC2 用于 PA2 压力传感器采样。
-- 压力流程为“空闲→预充气→正式测试→结果保持→放气复位”：首次有效采样达到 5 mmHg 后开始固定 10 s 测试，测试期间气泵以 10 kHz、50% 占空比继续充气，压力值闪烁并显示实时值。
+- 电池电压先经 3:1 一阶低通；蓝牙上报百分比再使用 2% 死区和连续 3 次同值确认，抑制负载瞬态造成的小程序电量跳变。非充电仅允许百分比下降，充电仅允许百分比上升；首次有效采样立即上报。
+- 压力流程为“空闲→预充气→正式测试→结果保持→放气复位”：首次有效采样达到 5 mmHg 后开始固定 10 s 测试，测试期间气泵以 10 kHz PWM 继续充气；电池电压 4.20 V 至 3.50 V 时占空比由 40% 线性补偿至 60%，压力值闪烁并显示实时值。
 - 预充气最长 60 s；110 mmHg 为最高优先级停泵和终止测试上限。仅完整运行 10 s 的测试保留最大压力并主动上报；提前停止、放气、ADC 异常或超压均丢弃本轮数据。
 - BATEN（PB2）在开机、工作和充电电池会话期间持续有效，关机或故障安全状态关闭，避免周期性通断干扰模拟前端。
 - 压力换算值、过压阈值和阀门有效电平尚待硬件确认；未确认前不得以显示数值作为医疗或安全依据。
@@ -116,7 +119,8 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 换向全关断死区，基于当前 128 MHz 时钟和定时器预分频 7；不可在未测关断时间前缩短。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | `1` 时强制两路 DAC 输出固定码值，仅限联调。 |
 | `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定 DAC 联调码值；受上限 3800 编译检查保护。 |
-| `MOTOR_PWM_TEST_DUTY_PERCENT` | `50` | 气泵 TIM4_CH4 联调占空比；PWM 频率保持 10 kHz。 |
+| `MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT` / `MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT` | `40` / `60` | 气泵 TIM4_CH4 在高/低电压端的 PWM 占空比。 |
+| `MOTOR_PWM_HIGH_VOLTAGE_MV` / `MOTOR_PWM_LOW_VOLTAGE_MV` | `4200` / `3500` | 气泵占空比线性补偿的高/低电压端点；区间外钳位。 |
 | `PRESSURE_MAX_MMHG` | `110` | 最大压力保护上限；预充气或测试中达到即停泵、终止测试并丢弃数据。 |
 | `PRESSURE_TEST_SETPOINT_MMHG` | `5` | 首次有效采样达到该值时开始固定时长测试，气泵继续运行。 |
 | `PRESSURE_INFLATE_TIMEOUT_S` | `60` | 达到测试起点前的最长连续预充气时间。 |
@@ -124,6 +128,9 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙 `POWER_LONG` 请求关机。 |
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |
+| `APP_STOP0_ENABLE` | `1` | 允许无充电器的 `POWER_OFF` 状态进入 STOP0；须配合正确选项字节。 |
+| `APP_STOP0_ENTRY_DELAY_MS` | `10000` | 上电或唤醒后进入 STOP0 前保留的下载、恢复和输入检测窗口。 |
+| `APP_POWER_OFF_BEEP_DELAY_MS` | `2000` | 工作状态关机后保留蜂鸣器任务运行的时间，结束后受控复位并进入 STOP0。 |
 | `APP_CORTEX_M4_838869_WORKAROUND_ENABLE` | `1` | 对 Cortex-M4 r0p0/r0p1 启用 838869 全局写缓冲规避；可能轻微增加写入延迟。 |
 | `BUZZER_OUTPUT_ENABLE` | `1` | 启用蜂鸣器提示音；TIM3 使用 PB1 输出 PWM。 |
 

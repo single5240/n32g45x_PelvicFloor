@@ -1620,14 +1620,28 @@ void TIM5_IRQHandler(void) /// 作为通用定时器使用
 // }
 void EXTI15_10_IRQHandler(void)
 {
+	uint8_t wake_sources = 0U;
+
 	if (RESET != EXTI_GetITStatus(EXTI_LINE10)) ////CHARG唤醒
 	{
 		EXTI_ClrITPendBit(EXTI_LINE10);
+		wake_sources |= APP_WAKE_SOURCE_CHARG;
+	}
+	if (RESET != EXTI_GetITStatus(EXTI_LINE11)) ////STDBY唤醒
+	{
+		EXTI_ClrITPendBit(EXTI_LINE11);
+		wake_sources |= APP_WAKE_SOURCE_STDBY;
 	}
 	if (RESET != EXTI_GetITStatus(EXTI_LINE15)) ////PB唤醒
 	{
 		EXTI_ClrITPendBit(EXTI_LINE15);
+		wake_sources |= APP_WAKE_SOURCE_POWER;
 	}
+	if (wake_sources != 0U)
+	{
+		App_LowPowerWakeISR(wake_sources);
+	}
+	__DSB();
 }
 
 /**
