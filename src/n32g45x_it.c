@@ -499,17 +499,17 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 {
 	uint32_t primask = __get_PRIMASK();
 	TIM_Module *timer;
-	IRQn_Type update_irq;
+	IRQn_Type compare_irq;
 
 	if (channel == TREATMENT_CHANNEL_1)
 	{
 		timer = TIM1;
-		update_irq = TIM1_UP_IRQn;
+		compare_irq = TIM1_CC_IRQn;
 	}
 	else if (channel == TREATMENT_CHANNEL_2)
 	{
 		timer = TIM8;
-		update_irq = TIM8_UP_IRQn;
+		compare_irq = TIM8_CC_IRQn;
 	}
 	else
 	{
@@ -527,29 +527,29 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 	}
 
 	TIM_Enable(timer, DISABLE);
-	TIM_ConfigInt(timer, TIM_INT_UPDATE, DISABLE);
-	TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE);
-	NVIC_ClearPendingIRQ(update_irq);
+	TIM_ConfigInt(timer, TIM_INT_CC3, DISABLE);
+	TIM_ClrIntPendingBit(timer, TIM_INT_CC3);
+	NVIC_ClearPendingIRQ(compare_irq);
 
 	if (enabled != 0U)
 	{
 		TIM_SetCnt(timer, TREATMENT_TIMER_RELOAD_VALUE);
-		TIM_ClrIntPendingBit(timer, TIM_INT_UPDATE);
-		NVIC_ClearPendingIRQ(update_irq);
-		TIM_ConfigInt(timer, TIM_INT_UPDATE, ENABLE);
+		TIM_ClrIntPendingBit(timer, TIM_INT_CC3);
+		NVIC_ClearPendingIRQ(compare_irq);
+		TIM_ConfigInt(timer, TIM_INT_CC3, ENABLE);
 		TIM_Enable(timer, ENABLE);
 	}
 	__set_PRIMASK(primask);
 }
 
-void TIM1_UP_IRQHandler(void)
+void TIM1_CC_IRQHandler(void)
 {
-	if (TIM_GetIntStatus(TIM1, TIM_INT_UPDATE) != RESET)
+	if (TIM_GetIntStatus(TIM1, TIM_INT_CC3) != RESET)
 	{
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
-		g_diag_tim1_update_count++;
+		g_diag_tim1_cc_count++;
 #endif
-		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
+		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
 		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
 		__DSB();
 		if (Pwr1)									////
@@ -886,14 +886,14 @@ void TIM1_UP_IRQHandler(void)
 	__DSB();
 }
 
-void TIM8_UP_IRQHandler(void)
+void TIM8_CC_IRQHandler(void)
 {
-	if (TIM_GetIntStatus(TIM8, TIM_INT_UPDATE) != RESET)
+	if (TIM_GetIntStatus(TIM8, TIM_INT_CC3) != RESET)
 	{
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
-		g_diag_tim8_update_count++;
+		g_diag_tim8_cc_count++;
 #endif
-		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
+		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
 		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
 		__DSB();
 		if (Pwr2)

@@ -228,9 +228,16 @@ void TIM1_Configuration(void)
 
     TIM_InitOc2(TIM1, &TIM_OCInitStructure);
 
+    /* CH3 is internal timing only: preselect the next leg before reload. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PRESELECT_COMPARE;
+    TIM_InitOc3(TIM1, &TIM_OCInitStructure);
+
 	/* The application enables the counter and interrupts only while CH1 is active. */
 	TIM_EnableCtrlPwmOutputs(TIM1, ENABLE);
-	TIM_ConfigInt(TIM1, TIM_INT_UPDATE, DISABLE);
+	TIM_ConfigInt(TIM1, TIM_INT_CC3, DISABLE);
 	TIM_Enable(TIM1, DISABLE);
     
 }
@@ -277,8 +284,15 @@ void TIM8_Configuration(void)
 
     TIM_InitOc2(TIM8, &TIM_OCInitStructure);
 
+    /* CH3 is internal timing only: preselect the next leg before reload. */
+    TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
+    TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
+    TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PRESELECT_COMPARE;
+    TIM_InitOc3(TIM8, &TIM_OCInitStructure);
+
     /* The application enables the counter and interrupts only while CH2 is active. */
-    TIM_ConfigInt(TIM8, TIM_INT_UPDATE, DISABLE);
+    TIM_ConfigInt(TIM8, TIM_INT_CC3, DISABLE);
     TIM_Enable(TIM8, DISABLE);
     TIM_EnableCtrlPwmOutputs(TIM8, ENABLE);
 }
@@ -515,13 +529,13 @@ void NVIC_Configuration(void)
 {
     NVIC_InitType NVIC_InitStructure;
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_1);
-    /* Enable the TIM1 global Interrupt */
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM1_UP_IRQn;
+    /* CC3 preselects the next treatment leg during the inactive window. */
+    NVIC_InitStructure.NVIC_IRQChannel                   = TIM1_CC_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
-    NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_UP_IRQn;
+    NVIC_InitStructure.NVIC_IRQChannel                   = TIM8_CC_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;

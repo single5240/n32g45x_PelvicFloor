@@ -89,8 +89,8 @@
 - 幅值链路已确认为 `PA5/DAC_CHANNEL_2/原理图 DAC1 -> VP1 -> CH1` 和 `PA4/DAC_CHANNEL_1/原理图 DAC2 -> VP2 -> CH2`。原理图网络名与 MCU DAC 通道号顺序相反，修改时不得仅凭 `DAC1/DAC2` 名称判断物理通道。
 - 已知幅值控制级包含 LM321、三极管和高压调节器件，并由约 +53 V 高压电源形成 VP1/VP2；+53 V 容差、器件完整型号、DAC 单调方向、DAC=0/满量程时 VP 电压及 500 Ω 负载换算均待确认。
 - 当前统一关断同时禁用 TIM1/TIM8 四路比较输出并将两路 DAC 写 0。桥臂双低已确认为关闭状态，但“DAC=0 即高压幅值安全归零”尚未通过硬件实测，必须作为台架验证项，不得仅凭代码判定安全。
-- 当前为正常输出构建：`APP_DIAGNOSTICS_ENABLE=0`（卡死诊断关闭）、`TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=1`、`TREATMENT_DAC_OUTPUT_ENABLE=1`，TIM1/TIM8 桥臂与两路 DAC 物理输出均已启用。软件空载诊断构建（`APP_DIAGNOSTICS_ENABLE=1`，同时置 `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=0`、`TREATMENT_DAC_OUTPUT_ENABLE=0`）会关闭物理输出但保留 UPDATE 内部时序中断，用于区分完整软件中断负载与物理输出干扰。无论何种构建，换向空窗仍须用示波器确认无交叠。
-- 当前治疗脉冲采用 QW-363 的向下计数 PWM 方案：TIM1/TIM8 每 625 us 产生一次 UPDATE，ISR 交替使能左右桥臂，PWM 硬件把单相有效脉宽限制为 300 us；CH2 针对 TIM8_CH1N/CH2N 互补输出采用等效 PWM 模式。316 已确认的引脚通道、DAC 映射、包络和统一安全关断继续保留；后续硬件复测仍应记录频率、脉宽、极性、换向空窗和负载幅值。
+- 当前为正常输出构建：`APP_DIAGNOSTICS_ENABLE=0`（卡死诊断关闭）、`TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=1`、`TREATMENT_DAC_OUTPUT_ENABLE=1`，TIM1/TIM8 桥臂与两路 DAC 物理输出均已启用。软件空载诊断构建（`APP_DIAGNOSTICS_ENABLE=1`，同时置 `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=0`、`TREATMENT_DAC_OUTPUT_ENABLE=0`）会关闭物理输出但保留 CC3 内部时序中断，用于区分完整软件中断负载与物理输出干扰。无论何种构建，换向空窗仍须用示波器确认无交叠。
+- 当前治疗脉冲使用向下计数 PWM 和单一 CC3 比较中断：TIM1/TIM8 的 CC3 在每个 625 us 相位重装前 200 us 预选下一桥臂，UPDATE 只负责硬件重装而不产生 ISR，PWM 硬件限制单相有效脉宽。CH2 针对 TIM8_CH1N/CH2N 互补输出采用等效 PWM 模式。后续硬件复测必须记录频率、脉宽、极性、换向空窗和负载幅值。
 - 2026-09-09 台架反馈：CH2 改用 TIM8_CH1N/CH2N 后已观察到互补波形；测试条件和具体时序数值未记录。本次结果仅确认引脚能够输出，不代表 DAC 幅值、负载限压或换向空窗已经验收。
 - 当前 P1/P2/P3 在软件中分别映射为原始代码的长/短梯形、长/短棱形、长/短三角包络组合。切换模式先统一关断并清零强度，再重置两路包络；通道强度从 0 增加到非零前重置该通道包络状态。
 
@@ -126,7 +126,7 @@
 | --- | ---: | --- |
 | `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 台架联调：启用两路 DAC 幅值链路和 TIM6；量产前仍需完成负载幅值验证。 |
 | `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM1/TIM8 桥臂 PWM 物理输出；死区未验收前不得压缩。 |
-| `APP_DIAGNOSTICS_ENABLE` | `0` | 卡死定位诊断关闭；诊断构建时置 1，并配合 DAC/桥臂置 0 保留 UPDATE/CC3/CC4 中断负载。 |
+| `APP_DIAGNOSTICS_ENABLE` | `0` | 卡死定位诊断关闭；诊断构建时置 1，并配合 DAC/桥臂置 0 保留 CC3 中断负载。 |
 | `TREATMENT_PULSE_FREQUENCY_HZ` | `800` | 完整双相脉冲频率；每个极性相位为 625 us。 |
 | `TREATMENT_PULSE_WIDTH_US` | `300` | 单相有效脉宽；其余 325 us 为换向全关断窗口。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | 固定 DAC 码值测试关闭；开启时使用 `TREATMENT_DAC_FIXED_VALUE`。 |
@@ -198,7 +198,7 @@
 
 ### 当前源码追溯与实施门禁
 
-- `src/n32g45x_it.c`、`src/init.c` 的双路脉冲采用 QW-363 定时方案，按当前 128 MHz 定时器时钟、预分频 7 配置为 16 MHz 计数、ARR=9999、CCR=4800；寄存器计算目标为 800 Hz 双相周期和 300 us 单相脉宽，但仍必须以最终时钟树、引脚复用及示波器实测确认频率、脉宽和容差。
+- `src/n32g45x_it.c`、`src/init.c` 的双路脉冲按当前 128 MHz 定时器时钟、预分频 7 配置为 16 MHz 计数、ARR=9999、PWM CCR=4800、内部 CC3=3200；CC3 是唯一治疗定时中断源，在重装前 200 us 预选下一桥臂。寄存器计算目标为 800 Hz 双相周期和 300 us 单相脉宽，但仍必须以最终时钟树、引脚复用及示波器实测确认频率、脉宽和容差。
 - `src/main.c` 已有治疗/压力/充电状态、两路强度字段、P1–P3 选择、10/20/30 min 时间循环、LCD 闪烁和统一 `Treatment_StopOutputs()`。这些软件框架不构成对幅值、无刺痛、双路无干扰或充电保护的验收结论。
 - 当前电源及治疗页启动键长按常量为 2 s，压力页启动键长按为 3 s；压力流程已实现 60 s 预充气超时、5 mmHg 起算、50% 占空比持续充气固定测试 10 s、110 mmHg 立即终止、最大值结果保持及放气复位。强度按 1 档递增/递减，范围 0～60。电源长按与需求书 3 s 要求仍有差异，真实输出也尚未完成“一档一 V”标定。
 - 压力 ADC 协调采样、气泵/阀门控制和蓝牙 V1.1.2 接收解析已接入；`THERAPY_END_NOTIFY` 固定上报累计时长和关断前 CH1/CH2 强度，无强度通道为 0。压力传感器失效诊断、蓝牙鉴权/幂等及数据持久化仍为待实现项。

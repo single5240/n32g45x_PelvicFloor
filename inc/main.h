@@ -179,6 +179,10 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 	(TREATMENT_PULSE_WIDTH_US * TREATMENT_TIMER_TICKS_PER_US)
 /* 复用 QW-363 的向下计数 PWM 方案，CCR 对应单相有效脉宽计数。 */
 #define TREATMENT_BRIDGE_PWM_COMPARE         TREATMENT_PULSE_WIDTH_TICKS
+/* CC3 在下一次重装前预选桥臂，仅使用比较中断进行相位推进。 */
+#define TREATMENT_BRIDGE_PRESELECT_MARGIN_US 200U
+#define TREATMENT_BRIDGE_PRESELECT_COMPARE   \
+	(TREATMENT_BRIDGE_PRESELECT_MARGIN_US * TREATMENT_TIMER_TICKS_PER_US)
 /* 台架联调：置 1 后两路 DAC 使用固定码值；量产构建必须保持关闭。 */
 #define TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE 0U
 #define TREATMENT_DAC_FIXED_VALUE             2000U
@@ -204,6 +208,12 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 #if (TREATMENT_PULSE_WIDTH_US >= TREATMENT_TIMER_PHASE_PERIOD_US)
 #error "Treatment pulse width must be shorter than one phase period"
+#endif
+
+#if (TREATMENT_BRIDGE_PRESELECT_MARGIN_US == 0U) || \
+    (TREATMENT_BRIDGE_PRESELECT_MARGIN_US >= \
+     (TREATMENT_TIMER_PHASE_PERIOD_US - TREATMENT_PULSE_WIDTH_US))
+#error "Treatment bridge preselect point must be inside the inactive window"
 #endif
 
 #if (TREATMENT_DAC_FIXED_VALUE > 3800U)
