@@ -53,6 +53,8 @@ extern volatile uint8_t Pwr2;
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 extern volatile uint32_t g_diag_tim1_update_count;
 extern volatile uint32_t g_diag_tim8_update_count;
+extern volatile uint32_t g_diag_tim1_spurious_count;
+extern volatile uint32_t g_diag_tim8_spurious_count;
 extern volatile uint32_t g_diag_tim1_cc_count;
 extern volatile uint32_t g_diag_tim8_cc_count;
 extern volatile uint32_t g_diag_usart2_irq_count;
@@ -568,7 +570,8 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 		NVIC_ClearPendingIRQ(update_irq);
 		NVIC_ClearPendingIRQ(compare_irq);
 		TIM_ConfigInt(timer, TIM_INT_UPDATE, ENABLE);
-#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
+#if ((TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U) || \
+     (APP_DIAGNOSTICS_ENABLE != 0U))
 		TIM_ConfigInt(timer, TIM_INT_CC3, ENABLE);
 #endif
 		TIM_Enable(timer, ENABLE);
@@ -584,6 +587,8 @@ void TIM1_UP_IRQHandler(void)
 		g_diag_tim1_update_count++;
 #endif
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_UPDATE);
+		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
+		__DSB();
 		TIM_ConfigInt(TIM1, TIM_INT_CC4, DISABLE);
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC4);
 		s_treatment_ch1_pending_leg = TREATMENT_BRIDGE_OFF;
@@ -918,6 +923,12 @@ void TIM1_UP_IRQHandler(void)
 			Tim1_Count = 0U;
 		}
 	}
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
+	else
+	{
+		g_diag_tim1_spurious_count++;
+	}
+#endif
 	/* Cortex-M4 erratum 838869 workaround before exception return. */
 	__DSB();
 }
@@ -930,6 +941,8 @@ void TIM8_UP_IRQHandler(void)
 		g_diag_tim8_update_count++;
 #endif
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_UPDATE);
+		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
+		__DSB();
 		TIM_ConfigInt(TIM8, TIM_INT_CC4, DISABLE);
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC4);
 		s_treatment_ch2_pending_leg = TREATMENT_BRIDGE_OFF;
@@ -1264,6 +1277,12 @@ void TIM8_UP_IRQHandler(void)
 			Tim8_Count = 0U;
 		}
 	}
+#if (APP_DIAGNOSTICS_ENABLE != 0U)
+	else
+	{
+		g_diag_tim8_spurious_count++;
+	}
+#endif
 	/* Cortex-M4 erratum 838869 workaround before exception return. */
 	__DSB();
 }

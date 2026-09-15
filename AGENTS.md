@@ -89,7 +89,7 @@
 - 幅值链路已确认为 `PA5/DAC_CHANNEL_2/原理图 DAC1 -> VP1 -> CH1` 和 `PA4/DAC_CHANNEL_1/原理图 DAC2 -> VP2 -> CH2`。原理图网络名与 MCU DAC 通道号顺序相反，修改时不得仅凭 `DAC1/DAC2` 名称判断物理通道。
 - 已知幅值控制级包含 LM321、三极管和高压调节器件，并由约 +53 V 高压电源形成 VP1/VP2；+53 V 容差、器件完整型号、DAC 单调方向、DAC=0/满量程时 VP 电压及 500 Ω 负载换算均待确认。
 - 当前统一关断同时禁用 TIM1/TIM8 四路比较输出并将两路 DAC 写 0。桥臂双低已确认为关闭状态，但“DAC=0 即高压幅值安全归零”尚未通过硬件实测，必须作为台架验证项，不得仅凭代码判定安全。
-- 当前 `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=1`，TIM1/TIM8 的 CC3 比较中断用于结束 50 us 全关断死区；CC3 不驱动外部引脚。死区值仅为当前联调值，仍须用示波器确认换向无交叠。
+- 当前为正常输出构建：`APP_DIAGNOSTICS_ENABLE=0`（卡死诊断关闭）、`TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=1`、`TREATMENT_DAC_OUTPUT_ENABLE=1`，TIM1/TIM8 桥臂与两路 DAC 物理输出均已启用。软件空载诊断构建（`APP_DIAGNOSTICS_ENABLE=1`，同时置 `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE=0`、`TREATMENT_DAC_OUTPUT_ENABLE=0`）会关闭物理输出但保留 UPDATE/CC3/CC4 内部时序中断，用于区分完整软件中断负载与物理输出干扰。无论何种构建，死区仍须用示波器确认换向无交叠。
 - 当前治疗输出直接采用初始提交中已经由前同事实测的 TIM1/TIM8 配置、引脚通道用法和 DAC 包络代码，不再根据后续试验方案或 SDK 注释调整其时序与通道控制。现有统一安全关断继续保留；后续硬件复测仍应记录频率、脉宽、极性、换向空窗和负载幅值。
 - 2026-09-09 台架反馈：CH2 改用 TIM8_CH1N/CH2N 后已观察到互补波形；测试条件和具体时序数值未记录。本次结果仅确认引脚能够输出，不代表 DAC 幅值、负载限压或换向空窗已经验收。
 - 当前 P1/P2/P3 在软件中分别映射为原始代码的长/短梯形、长/短棱形、长/短三角包络组合。切换模式先统一关断并清零强度，再重置两路包络；通道强度从 0 增加到非零前重置该通道包络状态。
@@ -124,8 +124,9 @@
 
 | 宏 | 当前值 | 当前含义 |
 | --- | ---: | --- |
-| `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 启用两路 DAC 幅值链路和 TIM6。 |
-| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 启用 TIM1/TIM8 桥臂 PWM 及 CC3 死区中断。 |
+| `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 台架联调：启用两路 DAC 幅值链路和 TIM6；量产前仍需完成负载幅值验证。 |
+| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM1/TIM8 桥臂 PWM 物理输出；死区未验收前不得压缩。 |
+| `APP_DIAGNOSTICS_ENABLE` | `0` | 卡死定位诊断关闭；诊断构建时置 1，并配合 DAC/桥臂置 0 保留 UPDATE/CC3/CC4 中断负载。 |
 | `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 桥臂换向全关断死区，限制范围为 13～499 us。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | 固定 DAC 码值测试关闭；开启时使用 `TREATMENT_DAC_FIXED_VALUE`。 |
 | `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定值联调码，编译检查上限为 3800。 |

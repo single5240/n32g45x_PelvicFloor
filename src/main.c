@@ -79,6 +79,8 @@ volatile uint8_t Pwr2 = 0;
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 volatile uint32_t g_diag_tim1_update_count;
 volatile uint32_t g_diag_tim8_update_count;
+volatile uint32_t g_diag_tim1_spurious_count;
+volatile uint32_t g_diag_tim8_spurious_count;
 volatile uint32_t g_diag_tim1_cc_count;
 volatile uint32_t g_diag_tim8_cc_count;
 volatile uint32_t g_diag_usart2_irq_count;
@@ -163,8 +165,12 @@ typedef enum
 
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 #define APP_DIAG_MAGIC                    0xD316U
-#define APP_DIAG_VERSION                  0x0002U
+#define APP_DIAG_VERSION                  0x0003U
 #define APP_DIAG_SNAPSHOT_PERIOD_MS       100U
+#define APP_DIAG_FAULT_TYPE_MASK          0x000FU
+#define APP_DIAG_SPURIOUS_COUNT_MASK      0x003FU
+#define APP_DIAG_TIM1_SPURIOUS_SHIFT      4U
+#define APP_DIAG_TIM8_SPURIOUS_SHIFT      10U
 #define APP_DIAG_SRAM_START               0x20000000UL
 #define APP_DIAG_SRAM_END                 0x20024000UL
 #define APP_DIAG_BASIC_FRAME_WORDS        8U
@@ -206,6 +212,8 @@ typedef struct
 	uint32_t exc_return;
 	uint32_t tim1_update_count;
 	uint32_t tim8_update_count;
+	uint8_t tim1_spurious_count;
+	uint8_t tim8_spurious_count;
 	uint32_t tim1_cc_count;
 	uint32_t tim8_cc_count;
 	uint32_t usart2_irq_count;
@@ -708,7 +716,13 @@ static void AppDiagnostics_Init(void)
 		s_diag_previous.event = BKP->DAT4;
 		s_diag_previous.tick_ms = AppDiagnostics_Read32(&BKP->DAT5, &BKP->DAT6);
 		s_diag_previous.levels = BKP->DAT7;
-		s_diag_previous.fault_type = BKP->DAT8;
+		s_diag_previous.fault_type = BKP->DAT8 & APP_DIAG_FAULT_TYPE_MASK;
+		s_diag_previous.tim1_spurious_count =
+			(uint8_t)((BKP->DAT8 >> APP_DIAG_TIM1_SPURIOUS_SHIFT) &
+			          APP_DIAG_SPURIOUS_COUNT_MASK);
+		s_diag_previous.tim8_spurious_count =
+			(uint8_t)((BKP->DAT8 >> APP_DIAG_TIM8_SPURIOUS_SHIFT) &
+			          APP_DIAG_SPURIOUS_COUNT_MASK);
 		s_diag_previous.cfsr = AppDiagnostics_Read32(&BKP->DAT9, &BKP->DAT10);
 		s_diag_previous.hfsr = AppDiagnostics_Read32(&BKP->DAT11, &BKP->DAT12);
 		s_diag_previous.tim1_update_count = AppDiagnostics_Read32(&BKP->DAT13,
@@ -774,9 +788,11 @@ static void AppDiagnostics_LogPrevious(uint8_t watchdog_reset)
 	      s_diag_previous.fault_type, s_diag_previous.cfsr,
 	      s_diag_previous.hfsr, s_diag_previous.mmfar,
 	      s_diag_previous.bfar);
-	LOG_W("diag irq tim1_up=%u tim8_up=%u tim1_cc=%u tim8_cc=%u usart2=%u rx=%u err ring=%u ore=%u fe=%u ne=%u pe=%u",
+	LOG_W("diag irq tim1_up=%u tim8_up=%u spur=%u/%u tim1_cc=%u tim8_cc=%u usart2=%u rx=%u err ring=%u ore=%u fe=%u ne=%u pe=%u",
 	      s_diag_previous.tim1_update_count,
 	      s_diag_previous.tim8_update_count,
+	      s_diag_previous.tim1_spurious_count,
+	      s_diag_previous.tim8_spurious_count,
 	      s_diag_previous.tim1_cc_count,
 	      s_diag_previous.tim8_cc_count,
 	      s_diag_previous.usart2_irq_count,
@@ -811,7 +827,22 @@ static void AppDiagnostics_RecordEvent(AppEvent_t event)
 
 static void AppDiagnostics_SnapshotRuntime(void)
 {
+	uint32_t tim1_spurious_count = g_diag_tim1_spurious_count;
+	uint32_t tim8_spurious_count = g_diag_tim8_spurious_count;
+
+	if (tim1_spurious_count > APP_DIAG_SPURIOUS_COUNT_MASK)
+	{
+		tim1_spurious_count = APP_DIAG_SPURIOUS_COUNT_MASK;
+	}
+	if (tim8_spurious_count > APP_DIAG_SPURIOUS_COUNT_MASK)
+	{
+		tim8_spurious_count = APP_DIAG_SPURIOUS_COUNT_MASK;
+	}
 	BKP->DAT7 = (uint16_t)Pwr1 | ((uint16_t)Pwr2 << 8U);
+	BKP->DAT8 = (uint16_t)((tim1_spurious_count <<
+	                        APP_DIAG_TIM1_SPURIOUS_SHIFT) |
+	                       (tim8_spurious_count <<
+	                        APP_DIAG_TIM8_SPURIOUS_SHIFT));
 	AppDiagnostics_Write32(&BKP->DAT5, &BKP->DAT6, s_system_tick_ms);
 	AppDiagnostics_Write32(&BKP->DAT13, &BKP->DAT14,
 	                       g_diag_tim1_update_count);
@@ -845,7 +876,8 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 	const uint32_t *core_frame = stack_frame;
 
 	AppDiagnostics_SnapshotRuntime();
-	BKP->DAT8 = fault_type;
+	BKP->DAT8 = (uint16_t)((BKP->DAT8 & ~APP_DIAG_FAULT_TYPE_MASK) |
+	                       (fault_type & APP_DIAG_FAULT_TYPE_MASK));
 	AppDiagnostics_Write32(&BKP->DAT9, &BKP->DAT10, SCB->CFSR);
 	AppDiagnostics_Write32(&BKP->DAT11, &BKP->DAT12, SCB->HFSR);
 	AppDiagnostics_Write32(&BKP->DAT30, &BKP->DAT31, SCB->MMFAR);

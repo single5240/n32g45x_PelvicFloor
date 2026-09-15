@@ -546,7 +546,8 @@ void NVIC_Configuration(void)
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;
     NVIC_InitStructure.NVIC_IRQChannelCmd                = ENABLE;
     NVIC_Init(&NVIC_InitStructure);
-#if (TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U)
+#if ((TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE != 0U) || \
+     (APP_DIAGNOSTICS_ENABLE != 0U))
     NVIC_InitStructure.NVIC_IRQChannel                   = TIM1_CC_IRQn;
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority        = 1;

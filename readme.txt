@@ -48,7 +48,7 @@ Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时
 
 无充电器时每次物理上电默认进入 `POWER_OFF`，保留 10 s 下载和恢复窗口，期间电源键或 PB10/PB11 充电状态边沿会重新开始计时。窗口结束后通过 PB15/EXTI15、PB10/EXTI10、PB11/EXTI11 唤醒的 STOP0 降低功耗；唤醒后先恢复 HSI-PLL 产生的 128 MHz 时钟和 1 ms SysTick，再恢复其他 NVIC 中断。正常工作后 IWDG 已无法停止，因此再次关机时先立即关闭危险输出，继续运行蜂鸣器任务 2 s，再用 BKP DAT42 标记并受控复位；该标记仅在软件复位原因同时成立时有效，复位后不重复等待 10 s，直接进入 STOP0。STOP0 要求选项字节为软件 IWDG 且 `nRST_STOP=1`，条件不满足时仅记录错误并保持普通关机等待，不在运行时改写选项字节。
 
-为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次快照。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
+为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数、TIM1/TIM8 无有效 UPDATE 标志的异常入口计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次快照，其中 `spur=TIM1/TIM8` 为饱和到 63 的异常入口计数。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
 
 TIM1/TIM8 仅在对应治疗通道强度非零时启动计数器及 UPDATE/CC3 中断。通道归零、模式切换、关机或故障关断时立即关闭对应定时器中断并清除外设和 NVIC 挂起标志；再次从零档启动时复位计数器后重新使能，避免关机和未使用通道持续产生无效高频中断。
 
@@ -111,9 +111,9 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 
 | 宏 | 当前值 | 作用与注意事项 |
 | --- | ---: | --- |
-| `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 允许 TIM6/DAC 治疗幅值链路；DAC=0 是否等于高压安全归零需实测。 |
-| `APP_DIAGNOSTICS_ENABLE` | `0` | 关闭卡死定位诊断；不会编译备份寄存器快照、阶段记录及故障上下文访问，对外故障记录 API 保留为空实现。 |
-| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 允许 TIM1/TIM8 桥臂 PWM 输出；会实际驱动治疗桥臂。 |
+| `TREATMENT_DAC_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM6/DAC 治疗幅值链路；量产前仍需完成负载幅值验证。 |
+| `APP_DIAGNOSTICS_ENABLE` | `0` | 卡死定位诊断关闭；诊断构建时置 1，并配合 DAC/桥臂置 0 保留内部时序中断负载。 |
+| `TREATMENT_BRIDGE_PWM_OUTPUT_ENABLE` | `1` | 台架联调：启用 TIM1/TIM8 桥臂 PWM 物理输出；死区未验收前不得压缩。 |
 | `TREATMENT_PULSE_FREQUENCY_HZ` | `800` | 完整双相脉冲频率；每相槽为 625 us。 |
 | `TREATMENT_PULSE_WIDTH_US` | `300` | 单相桥臂导通目标宽度；由 CC4 比较事件关断。 |
 | `TREATMENT_BRIDGE_DEADTIME_US` | `50` | 换向全关断死区，基于当前 128 MHz 时钟和定时器预分频 7；不可在未测关断时间前缩短。 |
