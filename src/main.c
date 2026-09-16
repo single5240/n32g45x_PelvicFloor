@@ -283,7 +283,9 @@ typedef enum
 {
 	PRESSURE_PROCESS_IDLE = 0,
 	PRESSURE_PROCESS_INFLATING,
-	PRESSURE_PROCESS_WAITING,
+	PRESSURE_PROCESS_WAITING_HALF,
+	PRESSURE_PROCESS_WAITING_FULL,
+	PRESSURE_PROCESS_WAITING_CUSTOM,
 	PRESSURE_PROCESS_TESTING,
 	PRESSURE_PROCESS_RESULT,
 	PRESSURE_PROCESS_DEFLATING
@@ -613,6 +615,7 @@ static void Pressure_ResetProcess(void);
 static void Pressure_StartInflating(uint16_t target_mmhg);
 static void Pressure_StartDeflating(void);
 static void Pressure_StartTest(uint16_t duration_s);
+static uint8_t Pressure_IsWaitingForTest(void);
 static uint8_t Pressure_TestDurationReached(void);
 static void Pressure_EndTest(const char *reason);
 static void Pressure_AbortProcess(const char *reason);
@@ -1823,6 +1826,13 @@ static void Pressure_StartTest(uint16_t duration_s)
 	      s_system_tick_ms, duration_s);
 }
 
+static uint8_t Pressure_IsWaitingForTest(void)
+{
+	return ((s_pressure_process.state == PRESSURE_PROCESS_WAITING_HALF) ||
+	        (s_pressure_process.state == PRESSURE_PROCESS_WAITING_FULL) ||
+	        (s_pressure_process.state == PRESSURE_PROCESS_WAITING_CUSTOM)) ? 1U : 0U;
+}
+
 static uint8_t Pressure_TestDurationReached(void)
 {
 	return ((uint32_t)(s_system_tick_ms -
@@ -2636,7 +2646,7 @@ static void App_HandleEvent(AppEvent_t event)
 				{
 					Pressure_AbortProcess("manual");
 				}
-				else if (s_pressure_process.state == PRESSURE_PROCESS_WAITING)
+				else if (Pressure_IsWaitingForTest() != 0U)
 				{
 					Pressure_StartTest(PRESSURE_TEST_DURATION_S);
 				}
@@ -3653,7 +3663,7 @@ static void Pressure_UpdateLiveValue(uint16_t adc_value)
 	/* The hard limit always takes priority over the normal setpoint. */
 	if ((pressure_mmhg >= PRESSURE_MAX_MMHG) &&
 	    ((s_pressure_process.state == PRESSURE_PROCESS_INFLATING) ||
-	     (s_pressure_process.state == PRESSURE_PROCESS_WAITING) ||
+	     (Pressure_IsWaitingForTest() != 0U) ||
 	     (s_pressure_process.state == PRESSURE_PROCESS_TESTING)))
 	{
 		if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
@@ -3674,7 +3684,18 @@ static void Pressure_UpdateLiveValue(uint16_t adc_value)
 	else if ((s_pressure_process.state == PRESSURE_PROCESS_INFLATING) &&
 	         (pressure_mmhg >= s_pressure_process.target_mmhg))
 	{
-		s_pressure_process.state = PRESSURE_PROCESS_WAITING;
+		if (s_pressure_process.target_mmhg == PRESSURE_HALF_INFLATE_MMHG)
+		{
+			s_pressure_process.state = PRESSURE_PROCESS_WAITING_HALF;
+		}
+		else if (s_pressure_process.target_mmhg == PRESSURE_FULL_INFLATE_MMHG)
+		{
+			s_pressure_process.state = PRESSURE_PROCESS_WAITING_FULL;
+		}
+		else
+		{
+			s_pressure_process.state = PRESSURE_PROCESS_WAITING_CUSTOM;
+		}
 		s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 		s_ui.pressure_action_ms = 0U;
 		s_app.ui_dirty = 1U;
@@ -4414,7 +4435,7 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 			if (length != 2U) return BLE_RESULT_BAD_LENGTH;
 			if ((s_pressure_process.state != PRESSURE_PROCESS_IDLE) &&
 			    (s_pressure_process.state != PRESSURE_PROCESS_INFLATING) &&
-			    (s_pressure_process.state != PRESSURE_PROCESS_WAITING))
+			    (Pressure_IsWaitingForTest() == 0U))
 			{
 				return BLE_RESULT_STATE_CONFLICT;
 			}
@@ -4435,7 +4456,7 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 		else if (action == BLE_PRESSURE_ACTION_START_SESSION)
 		{
 			if (length != 2U) return BLE_RESULT_BAD_LENGTH;
-			if (s_pressure_process.state != PRESSURE_PROCESS_WAITING)
+			if (Pressure_IsWaitingForTest() == 0U)
 			{
 				return BLE_RESULT_STATE_CONFLICT;
 			}
