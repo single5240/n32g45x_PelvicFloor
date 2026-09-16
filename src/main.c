@@ -158,7 +158,6 @@ typedef enum
 	APP_EVENT_START_LONG,
 	APP_EVENT_PLUS_SHORT,
 	APP_EVENT_MINUS_SHORT,
-	APP_EVENT_PRESSURE_TEST_STOP,
 	APP_EVENT_CHARGER_CONNECTED,
 	APP_EVENT_CHARGER_DISCONNECTED
 } AppEvent_t;
@@ -188,7 +187,6 @@ typedef enum
 #define APP_DIAG_STAGE_STATE_10MS         0x0023U
 #define APP_DIAG_STAGE_CONTROL_10MS       0x0024U
 #define APP_DIAG_STAGE_REMOTE_10MS        0x0025U
-#define APP_DIAG_STAGE_RESPONSE_10MS      0x0026U
 #define APP_DIAG_STAGE_UI_50MS            0x0030U
 #define APP_DIAG_STAGE_SENSOR_100MS       0x0040U
 #define APP_DIAG_STAGE_POWER_1000MS       0x0050U
@@ -264,43 +262,6 @@ typedef char AppFaultSnapshotSizeCheck[
 	(sizeof(AppFaultSnapshot_t) <= 0x100U) ? 1 : -1];
 #endif
 
-#define APP_STATE_MASK(state)             ((uint8_t)(1U << (uint8_t)(state)))
-#define BLE_ACTION_FLAG_POWER_OFF_LOCK    0x01U
-#define BLE_ACTION_FLAG_TREATMENT_DANGER  0x02U
-#define BLE_ACTION_FLAG_PRESSURE_DANGER   0x04U
-#define BLE_ACTION_FLAG_LINK_REQUIRED     0x08U
-
-typedef struct
-{
-	uint8_t action;
-	AppEvent_t event;
-	uint8_t allowed_states;
-	uint8_t flags;
-} BleActionEntry_t;
-
-static const BleActionEntry_t s_ble_action_table[] =
-{
-	{1U, APP_EVENT_POWER_SHORT,
-	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
-	 BLE_ACTION_FLAG_TREATMENT_DANGER},
-	{2U, APP_EVENT_POWER_LONG,
-	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
-	 BLE_ACTION_FLAG_POWER_OFF_LOCK},
-	{3U, APP_EVENT_FUNCTION_SHORT,
-	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE), 0U},
-	{4U, APP_EVENT_START_SHORT,
-	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
-	 BLE_ACTION_FLAG_PRESSURE_DANGER},
-	{5U, APP_EVENT_START_LONG,
-	 APP_STATE_MASK(APP_STATE_THERAPY) | APP_STATE_MASK(APP_STATE_PRESSURE),
-	 BLE_ACTION_FLAG_PRESSURE_DANGER},
-	{6U, APP_EVENT_PLUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY),
-	 BLE_ACTION_FLAG_TREATMENT_DANGER},
-	{7U, APP_EVENT_MINUS_SHORT, APP_STATE_MASK(APP_STATE_THERAPY), 0U},
-	{8U, APP_EVENT_PRESSURE_TEST_STOP, APP_STATE_MASK(APP_STATE_PRESSURE),
-	 BLE_ACTION_FLAG_LINK_REQUIRED}
-};
-
 typedef enum
 {
 	KEY_ID_POWER = 0,
@@ -355,10 +316,26 @@ typedef enum
 #define BLE_AT_RESPONSE_TIMEOUT_MS  1000U
 #define BLE_TX_WAIT_TIMEOUT_MS      2U
 #define BLE_TX_PROCESS_BUDGET_BYTES 38U
+#define BLE_POWER_OFF_RESPONSE_DELAY_MS 20U
 #define BLE_RESET_DELAY_MS          100U
 #define BLE_AT_MAX_RETRY_COUNT      3U
 #define BLE_STA_STARTUP_CHECK_MS    1500U
 #define BLE_STA_DEBOUNCE_COUNT      10U
+
+#define BLE_MODE_THERAPY                    1U
+#define BLE_MODE_PRESSURE                   2U
+#define BLE_THERAPY_ACTION_SET_STRENGTH     1U
+#define BLE_THERAPY_ACTION_SET_DURATION     2U
+#define BLE_THERAPY_ACTION_SET_PROFILE      3U
+#define BLE_THERAPY_ACTION_SELECT_CHANNEL   4U
+#define BLE_THERAPY_ACTION_STOP             5U
+#define BLE_THERAPY_ACTION_SWITCH_PRESSURE  6U
+#define BLE_PRESSURE_ACTION_INFLATE          1U
+#define BLE_PRESSURE_ACTION_START_SESSION    2U
+#define BLE_PRESSURE_ACTION_STOP_SESSION     3U
+#define BLE_PRESSURE_ACTION_DEFLATE          4U
+#define BLE_PRESSURE_ACTION_STOP_INFLATE     5U
+#define BLE_PRESSURE_ACTION_SWITCH_THERAPY   6U
 
 /* 电池检测参数：PA3 �? 1/2 电池分压，PA6 为外�? 2.5 V 参考�? */
 #define BATTERY_ADC_SAMPLE_COUNT          8U
@@ -591,6 +568,8 @@ static uint8_t s_local_key_locked;
 static uint8_t s_ble_pending_remote_danger;
 static uint8_t s_ble_remote_danger_active;
 static uint8_t s_ble_protocol_link_active;
+static uint8_t s_ble_power_off_pending;
+static uint32_t s_ble_power_off_request_ms;
 static BleStaContext_t s_ble_sta;
 static TherapySessionContext_t s_therapy_session;
 static volatile BleCommCounters_t s_ble_comm_counters;
@@ -709,7 +688,8 @@ static void BleProtocol_StopAll(void);
 static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 	                                                const uint8_t *data, uint8_t length);
 static BleProtocolResult_t BleProtocol_LocalKeyLock(uint8_t locked);
-static BleProtocolResult_t BleProtocol_UiAction(uint8_t action);
+static BleProtocolResult_t BleProtocol_PowerOff(void);
+static void BleProtocol_ProcessPendingPowerOff(void);
 static void BleProtocol_LinkState(uint8_t connected);
 static void BleProtocol_RemoteDangerTimeout(void);
 static void BleProtocol_UpdateRemoteDanger(void);
@@ -1138,7 +1118,6 @@ static const char *AppDiagnostics_StageName(uint16_t stage)
 		case APP_DIAG_STAGE_STATE_10MS:    return "STATE";
 		case APP_DIAG_STAGE_CONTROL_10MS:  return "CONTROL";
 		case APP_DIAG_STAGE_REMOTE_10MS:   return "REMOTE";
-		case APP_DIAG_STAGE_RESPONSE_10MS: return "RESPONSE";
 		case APP_DIAG_STAGE_UI_50MS:       return "UI";
 		case APP_DIAG_STAGE_SENSOR_100MS:  return "SENSOR";
 		case APP_DIAG_STAGE_POWER_1000MS:  return "POWER";
@@ -2026,7 +2005,7 @@ static void App_Init(void)
 	ble_callbacks.stop_all = BleProtocol_StopAll;
 	ble_callbacks.mode_control = BleProtocol_ModeControl;
 	ble_callbacks.local_key_lock = BleProtocol_LocalKeyLock;
-	ble_callbacks.ui_action = BleProtocol_UiAction;
+	ble_callbacks.power_off = BleProtocol_PowerOff;
 	ble_callbacks.link_state = BleProtocol_LinkState;
 	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
 	ble_callbacks.get_status = BleProtocol_GetStatus;
@@ -2063,6 +2042,7 @@ static uint8_t App_RunOnce(void)
 	uint8_t control_cycle_completed = 0U;
 
 	BleProtocol_TxTask();
+	BleProtocol_ProcessPendingPowerOff();
 
 	if (Scheduler_IsDue(&s_scheduler.last_10ms, 10U))
 	{
@@ -2078,8 +2058,6 @@ static uint8_t App_RunOnce(void)
 		Control_Task10ms();
 		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_REMOTE_10MS);
 		BleProtocol_UpdateRemoteDanger();
-		APP_DIAG_SET_STAGE(APP_DIAG_STAGE_RESPONSE_10MS);
-		BleProtocol_CompleteUiAction(s_system_tick_ms);
 		control_cycle_completed = 1U;
 	}
 
@@ -2136,7 +2114,6 @@ static const char *App_EventName(AppEvent_t event)
 		case APP_EVENT_START_LONG:           return "START_LONG";
 		case APP_EVENT_PLUS_SHORT:           return "PLUS_SHORT";
 		case APP_EVENT_MINUS_SHORT:          return "MINUS_SHORT";
-		case APP_EVENT_PRESSURE_TEST_STOP:   return "PRESSURE_TEST_STOP";
 		case APP_EVENT_CHARGER_CONNECTED:    return "CHARGER_CONNECTED";
 		case APP_EVENT_CHARGER_DISCONNECTED: return "CHARGER_DISCONNECTED";
 		default:                             return "NONE";
@@ -2742,15 +2719,6 @@ static void App_HandleEvent(AppEvent_t event)
 				//       s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
 				//       (uint8_t)(s_ui.formula + 1U), *power);
 				s_app.ui_dirty = 1U;
-			}
-			break;
-
-		case APP_EVENT_PRESSURE_TEST_STOP:
-			if ((s_app.state == APP_STATE_PRESSURE) &&
-			    (s_pressure_process.state == PRESSURE_PROCESS_TESTING))
-			{
-				Ui_Beep(1U);
-				Pressure_EndTest("remote");
 			}
 			break;
 
@@ -4325,6 +4293,7 @@ static void BleProtocol_TxTask(void)
 
 static void BleProtocol_StopAll(void)
 {
+	Ui_Beep(1U);
 	Treatment_StopOutputs();
 	Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 	Pressure_StopOutputs();
@@ -4339,102 +4308,194 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 	                                                const uint8_t *data, uint8_t length)
 {
 	uint8_t level;
-	uint8_t channel = s_ui.selected_channel;
 	uint8_t *power;
 	uint16_t value;
-	if ((mode == 1U) && (action == 1U))
+
+	if ((mode != BLE_MODE_THERAPY) && (mode != BLE_MODE_PRESSURE))
 	{
-		if (length != 1U)
-		{
-			return BLE_RESULT_BAD_LENGTH;
-		}
-		level = data[0];
+		return BLE_RESULT_BAD_PARAMETER;
 	}
-	else if (mode == 2U)
+	if (((mode == BLE_MODE_THERAPY) &&
+	     (s_app.state != APP_STATE_THERAPY)) ||
+	    ((mode == BLE_MODE_PRESSURE) &&
+	     (s_app.state != APP_STATE_PRESSURE)))
 	{
-		if ((s_app.state != APP_STATE_PRESSURE) || (s_ui.charger_connected != 0U) ||
-		    (s_ble_sta.stable_connected == 0U))
+		return BLE_RESULT_STATE_CONFLICT;
+	}
+
+	if (mode == BLE_MODE_THERAPY)
+	{
+		if (action == BLE_THERAPY_ACTION_SET_STRENGTH)
 		{
-			return (s_app.state != APP_STATE_PRESSURE) ? BLE_RESULT_STATE_CONFLICT :
-			       ((s_ui.charger_connected != 0U) ? BLE_RESULT_CHARGING_LOCK : BLE_RESULT_SAFETY_LOCK);
+			if (length != 1U) return BLE_RESULT_BAD_LENGTH;
+			level = data[0];
+			if (level > UI_MAX_POWER) return BLE_RESULT_BAD_PARAMETER;
+			if (level != 0U)
+			{
+#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE == 0U)
+				return BLE_RESULT_SAFETY_LOCK;
+#endif
+				if (s_ui.charger_connected != 0U) return BLE_RESULT_CHARGING_LOCK;
+				if (s_ble_sta.stable_connected == 0U) return BLE_RESULT_SAFETY_LOCK;
+				if ((s_ui.power_ch1 == 0U) && (s_ui.power_ch2 == 0U) &&
+				    (s_ui.remaining_minutes == 0U) &&
+				    (s_ui.remaining_seconds == 0U))
+				{
+					s_ui.remaining_minutes = s_ui.set_minutes;
+				}
+				s_ble_pending_remote_danger = 1U;
+			}
+			power = (s_ui.selected_channel == 0U) ?
+			        &s_ui.power_ch1 : &s_ui.power_ch2;
+			*power = level;
+			s_app.ui_dirty = 1U;
+			LOG_I("t=%u BLE set strength ch=%u mode=P%u level=%u",
+			      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
+			      (uint8_t)(s_ui.formula + 1U), level);
 		}
-		if (action == 1U)
+		else if (action == BLE_THERAPY_ACTION_SET_DURATION)
+		{
+			if (length != 1U) return BLE_RESULT_BAD_LENGTH;
+			if ((data[0] != 10U) && (data[0] != 20U) && (data[0] != 30U))
+			{
+				return BLE_RESULT_BAD_PARAMETER;
+			}
+			s_ui.set_minutes = data[0];
+			s_ui.remaining_minutes = data[0];
+			s_ui.remaining_seconds = 0U;
+			s_app.ui_dirty = 1U;
+		}
+		else if (action == BLE_THERAPY_ACTION_SET_PROFILE)
+		{
+			if (length != 1U) return BLE_RESULT_BAD_LENGTH;
+			if ((data[0] == 0U) || (data[0] > TREATMENT_PULSE_MODE_COUNT))
+			{
+				return BLE_RESULT_BAD_PARAMETER;
+			}
+			if (s_ui.formula != (uint8_t)(data[0] - 1U))
+			{
+				Treatment_StopOutputs();
+				Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
+				s_ui.formula = (uint8_t)(data[0] - 1U);
+				TreatmentPulse_SetMode(s_ui.formula);
+			}
+			s_app.ui_dirty = 1U;
+		}
+		else if (action == BLE_THERAPY_ACTION_SELECT_CHANNEL)
+		{
+			if (length != 1U) return BLE_RESULT_BAD_LENGTH;
+			if ((data[0] == 0U) || (data[0] > 2U)) return BLE_RESULT_BAD_PARAMETER;
+			s_ui.selected_channel = (uint8_t)(data[0] - 1U);
+			s_app.ui_dirty = 1U;
+		}
+		else if (action == BLE_THERAPY_ACTION_STOP)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+			Treatment_StopOutputs();
+			Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
+		}
+		else if (action == BLE_THERAPY_ACTION_SWITCH_PRESSURE)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+			Ui_Beep(1U);
+			App_RequestState(APP_STATE_PRESSURE);
+			App_ApplyStateTransition();
+			return BLE_RESULT_OK;
+		}
+		else
+		{
+			return BLE_RESULT_BAD_PARAMETER;
+		}
+	}
+	else
+	{
+		if (action == BLE_PRESSURE_ACTION_INFLATE)
 		{
 			if (length != 2U) return BLE_RESULT_BAD_LENGTH;
 			if ((s_pressure_process.state != PRESSURE_PROCESS_IDLE) &&
 			    (s_pressure_process.state != PRESSURE_PROCESS_INFLATING) &&
-			    (s_pressure_process.state != PRESSURE_PROCESS_WAITING)) return BLE_RESULT_STATE_CONFLICT;
+			    (s_pressure_process.state != PRESSURE_PROCESS_WAITING))
+			{
+				return BLE_RESULT_STATE_CONFLICT;
+			}
 			value = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
-			if ((value == 0U) || (value >= PRESSURE_MAX_MMHG)) return BLE_RESULT_BAD_PARAMETER;
-			if ((s_pressure_process.state == PRESSURE_PROCESS_RESULT) ||
-			    (s_ui.pressure_value >= value)) return BLE_RESULT_SAFETY_LOCK;
+			if ((value == 0U) || (value >= PRESSURE_MAX_MMHG))
+			{
+				return BLE_RESULT_BAD_PARAMETER;
+			}
+			if (s_ui.pressure_value >= value) return BLE_RESULT_SAFETY_LOCK;
+#if (BLE_REMOTE_PRESSURE_CONTROL_ENABLE == 0U)
+			return BLE_RESULT_SAFETY_LOCK;
+#endif
+			if (s_ui.charger_connected != 0U) return BLE_RESULT_CHARGING_LOCK;
+			if (s_ble_sta.stable_connected == 0U) return BLE_RESULT_SAFETY_LOCK;
 			Pressure_StartInflating(value);
-			return BLE_RESULT_OK;
+			s_ble_pending_remote_danger = 1U;
 		}
-		if (action == 2U)
+		else if (action == BLE_PRESSURE_ACTION_START_SESSION)
 		{
 			if (length != 2U) return BLE_RESULT_BAD_LENGTH;
-			if (s_pressure_process.state != PRESSURE_PROCESS_WAITING) return BLE_RESULT_STATE_CONFLICT;
+			if (s_pressure_process.state != PRESSURE_PROCESS_WAITING)
+			{
+				return BLE_RESULT_STATE_CONFLICT;
+			}
 			value = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
-			if ((value == 0U) || (value > PRESSURE_TEST_DURATION_S)) return BLE_RESULT_BAD_PARAMETER;
+			if ((value == 0U) || (value > PRESSURE_TEST_DURATION_S))
+			{
+				return BLE_RESULT_BAD_PARAMETER;
+			}
+#if (BLE_REMOTE_PRESSURE_CONTROL_ENABLE == 0U)
+			return BLE_RESULT_SAFETY_LOCK;
+#endif
+			if (s_ui.charger_connected != 0U) return BLE_RESULT_CHARGING_LOCK;
+			if (s_ble_sta.stable_connected == 0U) return BLE_RESULT_SAFETY_LOCK;
 			Pressure_StartTest(value);
-			return BLE_RESULT_OK;
+			s_ble_pending_remote_danger = 1U;
 		}
-		if (action == 3U)
-		{
-			if ((length != 0U) || (s_pressure_process.state != PRESSURE_PROCESS_TESTING)) return BLE_RESULT_STATE_CONFLICT;
-			Pressure_EndTest("remote");
-			return BLE_RESULT_OK;
-		}
-		if (action == 4U)
+		else if (action == BLE_PRESSURE_ACTION_STOP_SESSION)
 		{
 			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+			if (s_pressure_process.state != PRESSURE_PROCESS_TESTING)
+			{
+				return BLE_RESULT_STATE_CONFLICT;
+			}
+			Pressure_EndTest("remote");
+		}
+		else if (action == BLE_PRESSURE_ACTION_DEFLATE)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+#if (BLE_REMOTE_PRESSURE_CONTROL_ENABLE == 0U)
+			return BLE_RESULT_SAFETY_LOCK;
+#endif
+			if (s_ui.charger_connected != 0U) return BLE_RESULT_CHARGING_LOCK;
+			if (s_ble_sta.stable_connected == 0U) return BLE_RESULT_SAFETY_LOCK;
 			Pressure_StartDeflating();
+			s_ble_pending_remote_danger = 1U;
+		}
+		else if (action == BLE_PRESSURE_ACTION_STOP_INFLATE)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+			if (s_pressure_process.state != PRESSURE_PROCESS_INFLATING)
+			{
+				return BLE_RESULT_STATE_CONFLICT;
+			}
+			Pressure_AbortProcess("remote");
+		}
+		else if (action == BLE_PRESSURE_ACTION_SWITCH_THERAPY)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+			Ui_Beep(1U);
+			App_RequestState(APP_STATE_THERAPY);
+			App_ApplyStateTransition();
 			return BLE_RESULT_OK;
 		}
-		return BLE_RESULT_BAD_PARAMETER;
-	}
-	else
-	{
-		return BLE_RESULT_BAD_PARAMETER;
+		else
+		{
+			return BLE_RESULT_BAD_PARAMETER;
+		}
 	}
 
-	if (level > UI_MAX_POWER)
-	{
-		return BLE_RESULT_BAD_PARAMETER;
-	}
-	if (s_app.state != APP_STATE_THERAPY)
-	{
-		return BLE_RESULT_STATE_CONFLICT;
-	}
-	if (level != 0U)
-	{
-#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE == 0U)
-		return BLE_RESULT_SAFETY_LOCK;
-#endif
-		if (s_ui.charger_connected != 0U)
-		{
-			return BLE_RESULT_CHARGING_LOCK;
-		}
-		if (s_ble_sta.stable_connected == 0U)
-		{
-			return BLE_RESULT_SAFETY_LOCK;
-		}
-		if ((s_ui.power_ch1 == 0U) && (s_ui.power_ch2 == 0U) &&
-		    (s_ui.remaining_minutes == 0U) &&
-		    (s_ui.remaining_seconds == 0U))
-		{
-			s_ui.remaining_minutes = s_ui.set_minutes;
-		}
-		s_ble_pending_remote_danger = 1U;
-	}
-
-	power = (channel == 0U) ? &s_ui.power_ch1 : &s_ui.power_ch2;
-	*power = level;
-	s_app.ui_dirty = 1U;
-	LOG_I("t=%u BLE set strength ch=%u mode=P%u level=%u",
-	      s_system_tick_ms, (uint8_t)(channel + 1U),
-	      (uint8_t)(s_ui.formula + 1U), level);
+	Ui_Beep(1U);
 	return BLE_RESULT_OK;
 }
 
@@ -4446,83 +4507,54 @@ static BleProtocolResult_t BleProtocol_LocalKeyLock(uint8_t locked)
 	}
 	s_local_key_locked = (locked != 0U) ? 1U : 0U;
 	s_app.ui_dirty = 1U;
+	Ui_Beep(1U);
 	return BLE_RESULT_OK;
 }
 
-static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
+static BleProtocolResult_t BleProtocol_PowerOff(void)
 {
-	uint8_t index;
-	uint8_t dangerous_request = 0U;
-	const BleActionEntry_t *entry = 0;
-
-	for (index = 0U;
-	     index < (uint8_t)(sizeof(s_ble_action_table) /
-	                       sizeof(s_ble_action_table[0]));
-	     index++)
-	{
-		if (s_ble_action_table[index].action == action)
-		{
-			entry = &s_ble_action_table[index];
-			break;
-		}
-	}
-	if (entry == 0)
-	{
-		return BLE_RESULT_BAD_PARAMETER;
-	}
-	if ((entry->allowed_states & APP_STATE_MASK(s_app.state)) == 0U)
+	if ((s_app.state != APP_STATE_THERAPY) &&
+	    (s_app.state != APP_STATE_PRESSURE))
 	{
 		return BLE_RESULT_STATE_CONFLICT;
 	}
-	if ((action == 8U) &&
-	    (s_pressure_process.state != PRESSURE_PROCESS_TESTING))
-	{
-		return BLE_RESULT_STATE_CONFLICT;
-	}
-	if ((entry->flags & BLE_ACTION_FLAG_POWER_OFF_LOCK) != 0U)
-	{
 #if (BLE_REMOTE_POWER_OFF_CONTROL_ENABLE == 0U)
-		return BLE_RESULT_SAFETY_LOCK;
+	return BLE_RESULT_SAFETY_LOCK;
 #endif
-	}
-	if (((entry->flags & BLE_ACTION_FLAG_TREATMENT_DANGER) != 0U) &&
-	    ((action == 6U) || (Pwr1 != 0U) || (Pwr2 != 0U)))
-	{
-		dangerous_request = 1U;
-#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE == 0U)
-		return BLE_RESULT_SAFETY_LOCK;
-#endif
-	}
-	if (((entry->flags & BLE_ACTION_FLAG_PRESSURE_DANGER) != 0U) &&
-	    (s_app.state == APP_STATE_PRESSURE))
-	{
-		dangerous_request = 1U;
-#if (BLE_REMOTE_PRESSURE_CONTROL_ENABLE == 0U)
-		return BLE_RESULT_SAFETY_LOCK;
-#endif
-	}
-	if (dangerous_request != 0U)
-	{
-		if (s_ui.charger_connected != 0U)
-		{
-			return BLE_RESULT_CHARGING_LOCK;
-		}
-		if (s_ble_sta.stable_connected == 0U)
-		{
-			return BLE_RESULT_SAFETY_LOCK;
-		}
-	}
-	if (((entry->flags & BLE_ACTION_FLAG_LINK_REQUIRED) != 0U) &&
-	    (s_ble_sta.stable_connected == 0U))
-	{
-		return BLE_RESULT_SAFETY_LOCK;
-	}
-	if (EventQueue_Push(entry->event) == 0U)
+	if (s_ble_power_off_pending != 0U)
 	{
 		return BLE_RESULT_BUSY;
 	}
-	s_ble_pending_remote_danger = dangerous_request;
+
+	Ui_Beep(1U);
+	Treatment_StopOutputs();
+	Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
+	if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
+	{
+		Pressure_EndTest("switch");
+	}
+	Pressure_StopOutputs();
+	s_ble_pending_remote_danger = 0U;
+	s_ble_remote_danger_active = 0U;
+	BleProtocol_SetRemoteDangerActive(0U);
+	s_ble_power_off_request_ms = s_system_tick_ms;
+	s_ble_power_off_pending = 1U;
 	return BLE_RESULT_OK;
+}
+
+static void BleProtocol_ProcessPendingPowerOff(void)
+{
+	if ((s_ble_power_off_pending == 0U) ||
+	    ((uint32_t)(s_system_tick_ms - s_ble_power_off_request_ms) <
+	     BLE_POWER_OFF_RESPONSE_DELAY_MS) ||
+	    (BleProtocol_HasTxData() != 0U))
+	{
+		return;
+	}
+
+	s_ble_power_off_pending = 0U;
+	App_RequestState((s_ui.charger_connected != 0U) ?
+	                 APP_STATE_CHARGING : APP_STATE_POWER_OFF);
 }
 
 static void BleProtocol_LinkState(uint8_t connected)
@@ -4549,7 +4581,8 @@ static void BleProtocol_RemoteDangerTimeout(void)
 static void BleProtocol_UpdateRemoteDanger(void)
 {
 	uint8_t outputs_active = ((Pwr1 != 0U) || (Pwr2 != 0U) ||
-	                          (s_ui.pressure_action != PRESSURE_ACTION_IDLE)) ?
+	                          (s_ui.pressure_action != PRESSURE_ACTION_IDLE) ||
+	                          (s_pressure_process.state == PRESSURE_PROCESS_TESTING)) ?
 	                         1U : 0U;
 
 	if (s_ble_pending_remote_danger != 0U)

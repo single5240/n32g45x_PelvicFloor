@@ -65,7 +65,7 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | 100 ms | 电池 ADC、压力 ADC 采样协调 |
 | 1000 ms | 治疗倒计时、充电动画 |
 
-输入均转换为 `AppEvent_t`，由应用状态机集中处理；蓝牙 `UI_ACTION` 与实体按键复用同一事件路径，不能直接改写硬件寄存器。
+实体按键转换为 `AppEvent_t` 后由应用状态机集中处理；蓝牙使用带绝对参数的 `MODE_CONTROL`，不再模拟本地按键动作。
 
 主要状态：`POWER_OFF`、`BOOTING`、`READY`、`THERAPY`、`PRESSURE`、`CHARGING`、`FAULT`。治疗、压力、关机、充电和故障路径均应汇聚到 `Treatment_StopOutputs()`、`Pressure_StopOutputs()` 或 `Board_EnterSafeState()`。
 
@@ -101,10 +101,10 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 ### 蓝牙
 
 - USART2：115200、8N1、无硬件流控，PB4/PB5 使用第三重映射。
-- 协议说明见 `docs/蓝牙通讯协议V1.1.6.md`。
-- 远程关机、治疗和压力 UI 动作当前已开放，但治疗/压力危险动作仍要求状态合法、未处于充电互锁且 PB7 物理连接有效；断链会走统一停止路径。
+- 协议说明见 `docs/蓝牙通讯协议V1.1.9.md`。
+- 治疗和压力业务统一使用 `MODE_CONTROL` 绝对设定；`POWER_OFF(0x09)` 为独立关机命令，`UI_ACTION(0x10)` 已停止支持。危险动作仍要求模式匹配、未处于充电互锁且 PB7 物理连接有效；断链会走统一停止路径。
+- 治疗模式只接受治疗业务命令，压力模式只接受压力业务命令；不匹配的模式命令返回 `STATE_CONFLICT`。成功的控制命令响一声，查询和兼容心跳不触发蜂鸣。
 - 不再发送 `THERAPY_START_NOTIFY(0x93)`。`THERAPY_END_NOTIFY(0x94)` 发送结束类型、会话内实际输出通道、脉冲模式、时长和 CH1/CH2 结束强度；计时结束固定上报 600/1200/1800 s，主动结束均发送，时长按累计有效输出的完整秒换算。
-- `UI_ACTION=08` 仅在正式压力测试阶段停止测试，并将未满 10 s 的本轮结果判为无效；仅正式测试阶段的状态快照 `flags.bit6=1`，完整运行 10 s 且 BLE 仍连接时发送 `PRESSURE_RESULT_NOTIFY(0x92)`。
 - 远程开机不支持：关机状态下蓝牙模块已关闭。
 
 ## 5. 重要宏定义
@@ -127,7 +127,7 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `PRESSURE_FULL_INFLATE_MMHG` | `52` | 全充盈推荐目标。 |
 | `PRESSURE_INFLATE_TIMEOUT_S` | `60` | 达到测试起点前的最长连续预充气时间。 |
 | `PRESSURE_TEST_DURATION_S` | `1800` | 本地默认测试/训练时长；小程序可设定不超过该值的会话时长。 |
-| `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙 `POWER_LONG` 请求关机。 |
+| `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙独立 `POWER_OFF(0x09)` 命令请求关机。 |
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |
 | `APP_STOP0_ENABLE` | `1` | 允许无充电器的 `POWER_OFF` 状态进入 STOP0；须配合正确选项字节。 |
@@ -149,5 +149,5 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 详细实现请阅读：
 
 - `docs/状态机原理与业务实现.md`
-- `docs/蓝牙通讯协议V1.1.6.md`
+- `docs/蓝牙通讯协议V1.1.9.md`
 - `AGENTS.md`

@@ -10,7 +10,7 @@
 #define BLE_COMMAND_MODE_CONTROL         0x02U
 #define BLE_COMMAND_LOCAL_KEY_LOCK       0x03U
 #define BLE_COMMAND_STOP_ALL             0x08U
-#define BLE_COMMAND_UI_ACTION           0x10U
+#define BLE_COMMAND_POWER_OFF            0x09U
 #define BLE_COMMAND_GET_STATUS          0x71U
 #define BLE_COMMAND_LINK_KEEPALIVE      0x90U
 #define BLE_RX_FRAME_TIMEOUT_MS         200U
@@ -49,8 +49,6 @@ typedef struct
 	uint8_t heartbeat_received;
 	uint8_t link_active;
 	uint8_t remote_danger_active;
-	uint8_t ui_action_pending;
-	uint8_t defer_response;
 	BleProtocolCallbacks_t callbacks;
 	BleProtocolStats_t stats;
 } BleProtocolContext_t;
@@ -67,7 +65,7 @@ static BleProtocolResult_t BleCommand_ModeControl(const uint8_t *data,
                                                  uint32_t now_ms,
                                                  uint8_t *response,
                                                  uint8_t *response_length);
-static BleProtocolResult_t BleCommand_UiAction(const uint8_t *data,
+static BleProtocolResult_t BleCommand_PowerOff(const uint8_t *data,
 	                                            uint8_t length,
 	                                            uint32_t now_ms,
 	                                            uint8_t *response,
@@ -94,7 +92,7 @@ static const BleCommandEntry_t s_command_table[] =
 	{BLE_COMMAND_MODE_CONTROL,   0xFFU, BleCommand_ModeControl},
 	{BLE_COMMAND_LOCAL_KEY_LOCK, 1U, BleCommand_LocalKeyLock},
 	{BLE_COMMAND_STOP_ALL,       0U, BleCommand_StopAll},
-	{BLE_COMMAND_UI_ACTION,      1U, BleCommand_UiAction},
+	{BLE_COMMAND_POWER_OFF,      0U, BleCommand_PowerOff},
 	{BLE_COMMAND_GET_STATUS,     0U, BleCommand_GetStatus},
 	{BLE_COMMAND_LINK_KEEPALIVE, 0U, BleCommand_Keepalive}
 };
@@ -221,8 +219,6 @@ static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 	uint8_t response_length = 0U;
 	uint8_t index;
 	BleProtocolResult_t result = BLE_RESULT_UNSUPPORTED;
-	s_ble.defer_response = 0U;
-
 	if (s_ble.callbacks.on_command != 0)
 	{
 		s_ble.callbacks.on_command(command, &frame[5], length, now_ms);
@@ -254,10 +250,7 @@ static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 		s_ble.stats.unsupported_commands++;
 	}
 
-	if (s_ble.defer_response == 0U)
-	{
-		BleProtocol_QueueResponse(command, result, response, response_length);
-	}
+	BleProtocol_QueueResponse(command, result, response, response_length);
 }
 
 static void BleProtocol_ProcessFrame(uint32_t now_ms)
@@ -320,8 +313,6 @@ void BleProtocol_Reset(void)
 	s_ble.last_link_activity_ms = 0U;
 	s_ble.link_active = 0U;
 	s_ble.remote_danger_active = 0U;
-	s_ble.ui_action_pending = 0U;
-	s_ble.defer_response = 0U;
 }
 
 void BleProtocol_InputByte(uint8_t data, uint32_t now_ms)
@@ -393,28 +384,6 @@ void BleProtocol_Task(uint32_t now_ms)
 			s_ble.callbacks.link_state(0U);
 		}
 	}
-}
-
-void BleProtocol_CompleteUiAction(uint32_t now_ms)
-{
-	uint8_t response[BLE_PROTOCOL_STATUS_LENGTH];
-
-	if (s_ble.ui_action_pending == 0U)
-	{
-		return;
-	}
-	if (s_ble.callbacks.get_status == 0)
-	{
-		BleProtocol_QueueResponse(BLE_COMMAND_UI_ACTION,
-		                          BLE_RESULT_INTERNAL_ERROR, 0, 0U);
-	}
-	else
-	{
-		s_ble.callbacks.get_status(now_ms, response);
-		BleProtocol_QueueResponse(BLE_COMMAND_UI_ACTION, BLE_RESULT_OK,
-		                          response, BLE_PROTOCOL_STATUS_LENGTH);
-	}
-	s_ble.ui_action_pending = 0U;
 }
 
 void BleProtocol_NotifyStatus(uint32_t now_ms)
@@ -526,15 +495,15 @@ static BleProtocolResult_t BleCommand_StopAll(const uint8_t *data,
 {
 	(void)data;
 	(void)length;
-	if ((s_ble.callbacks.stop_all == 0) ||
-	    (s_ble.callbacks.get_status == 0))
+	(void)now_ms;
+	(void)response;
+	(void)response_length;
+	if (s_ble.callbacks.stop_all == 0)
 	{
 		return BLE_RESULT_INTERNAL_ERROR;
 	}
 
 	s_ble.callbacks.stop_all();
-	s_ble.callbacks.get_status(now_ms, response);
-	*response_length = BLE_PROTOCOL_STATUS_LENGTH;
 	return BLE_RESULT_OK;
 }
 
@@ -546,19 +515,16 @@ static BleProtocolResult_t BleCommand_ModeControl(const uint8_t *data,
 {
 	BleProtocolResult_t result;
 
-	if ((length < 2U) || (s_ble.callbacks.mode_control == 0) ||
-	    (s_ble.callbacks.get_status == 0))
+	if ((length < 2U) || (s_ble.callbacks.mode_control == 0))
 	{
 		return (length < 2U) ? BLE_RESULT_BAD_LENGTH : BLE_RESULT_INTERNAL_ERROR;
 	}
 
+	(void)now_ms;
+	(void)response;
+	(void)response_length;
 	result = s_ble.callbacks.mode_control(data[0], data[1], &data[2],
 	                                       (uint8_t)(length - 2U));
-	if (result == BLE_RESULT_OK)
-	{
-		s_ble.callbacks.get_status(now_ms, response);
-		*response_length = BLE_PROTOCOL_STATUS_LENGTH;
-	}
 	return result;
 }
 
@@ -570,21 +536,18 @@ static BleProtocolResult_t BleCommand_LocalKeyLock(const uint8_t *data,
 {
 	BleProtocolResult_t result;
 	(void)length;
-	if ((data[0] > 1U) || (s_ble.callbacks.local_key_lock == 0) ||
-	    (s_ble.callbacks.get_status == 0))
+	(void)now_ms;
+	(void)response;
+	(void)response_length;
+	if ((data[0] > 1U) || (s_ble.callbacks.local_key_lock == 0))
 	{
 		return (data[0] > 1U) ? BLE_RESULT_BAD_PARAMETER : BLE_RESULT_INTERNAL_ERROR;
 	}
 	result = s_ble.callbacks.local_key_lock(data[0]);
-	if (result == BLE_RESULT_OK)
-	{
-		s_ble.callbacks.get_status(now_ms, response);
-		*response_length = BLE_PROTOCOL_STATUS_LENGTH;
-	}
 	return result;
 }
 
-static BleProtocolResult_t BleCommand_UiAction(const uint8_t *data,
+static BleProtocolResult_t BleCommand_PowerOff(const uint8_t *data,
 	                                            uint8_t length,
 	                                            uint32_t now_ms,
 	                                            uint8_t *response,
@@ -592,30 +555,17 @@ static BleProtocolResult_t BleCommand_UiAction(const uint8_t *data,
 {
 	BleProtocolResult_t result;
 
+	(void)data;
 	(void)length;
 	(void)now_ms;
 	(void)response;
 	(void)response_length;
-
-	if ((data[0] == 0U) || (data[0] > 8U))
-	{
-		return BLE_RESULT_BAD_PARAMETER;
-	}
-	if (s_ble.ui_action_pending != 0U)
-	{
-		return BLE_RESULT_BUSY;
-	}
-	if (s_ble.callbacks.ui_action == 0)
+	if (s_ble.callbacks.power_off == 0)
 	{
 		return BLE_RESULT_INTERNAL_ERROR;
 	}
 
-	result = s_ble.callbacks.ui_action(data[0]);
-	if (result == BLE_RESULT_OK)
-	{
-		s_ble.ui_action_pending = 1U;
-		s_ble.defer_response = 1U;
-	}
+	result = s_ble.callbacks.power_off();
 	return result;
 }
 

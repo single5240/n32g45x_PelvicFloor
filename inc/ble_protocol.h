@@ -11,7 +11,7 @@ extern "C" {
 #define BLE_PROTOCOL_STATUS_LENGTH    22U
 #define BLE_COMMAND_MODE_CONTROL       0x02U
 #define BLE_COMMAND_LOCAL_KEY_LOCK     0x03U
-#define BLE_COMMAND_UI_ACTION         0x10U
+#define BLE_COMMAND_POWER_OFF          0x09U
 #define BLE_COMMAND_STATUS_NOTIFY     0x91U
 #define BLE_COMMAND_PRESSURE_SESSION_END_NOTIFY 0x93U
 #define BLE_COMMAND_THERAPY_END_NOTIFY 0x94U
@@ -36,7 +36,7 @@ typedef struct
 	BleProtocolResult_t (*mode_control)(uint8_t mode, uint8_t action,
 	                                    const uint8_t *data, uint8_t length);
 	BleProtocolResult_t (*local_key_lock)(uint8_t locked);
-	BleProtocolResult_t (*ui_action)(uint8_t action);
+	BleProtocolResult_t (*power_off)(void);
 	void (*link_state)(uint8_t connected);
 	void (*remote_danger_timeout)(void);
 	void (*get_status)(uint32_t now_ms,
@@ -64,7 +64,6 @@ void BleProtocol_Init(const BleProtocolCallbacks_t *callbacks);
 void BleProtocol_Reset(void);
 void BleProtocol_InputByte(uint8_t data, uint32_t now_ms);
 void BleProtocol_Task(uint32_t now_ms);
-void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_NotifyStatus(uint32_t now_ms);
 void BleProtocol_NotifyPressureSessionEnd(uint8_t end_reason,
                                           uint8_t result_valid,
