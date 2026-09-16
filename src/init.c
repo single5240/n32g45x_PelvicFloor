@@ -226,11 +226,11 @@ void TIM1_Configuration(void)
 
     TIM_InitOc2(TIM1, &TIM_OCInitStructure);
 
-    /* CH3 is internal timing only: preselect the next leg before reload. */
+    /* CH3 preselects the next leg before the TIM1 PWM1 active window. */
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PRESELECT_COMPARE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_CH1_BRIDGE_PRESELECT_COMPARE;
     TIM_InitOc3(TIM1, &TIM_OCInitStructure);
 
 	/* The application enables the counter and interrupts only while CH1 is active. */
@@ -282,11 +282,11 @@ void TIM8_Configuration(void)
 
     TIM_InitOc2(TIM8, &TIM_OCInitStructure);
 
-    /* CH3 is internal timing only: preselect the next leg before reload. */
+    /* CH3 preselects the next complementary leg before reload. */
     TIM_OCInitStructure.OcMode       = TIM_OCMODE_TIMING;
     TIM_OCInitStructure.OutputState  = TIM_OUTPUT_STATE_DISABLE;
     TIM_OCInitStructure.OutputNState = TIM_OUTPUT_NSTATE_DISABLE;
-    TIM_OCInitStructure.Pulse        = TREATMENT_BRIDGE_PRESELECT_COMPARE;
+    TIM_OCInitStructure.Pulse        = TREATMENT_CH2_BRIDGE_PRESELECT_COMPARE;
     TIM_InitOc3(TIM8, &TIM_OCInitStructure);
 
     /* The application enables the counter and interrupts only while CH2 is active. */
