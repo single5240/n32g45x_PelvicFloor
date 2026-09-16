@@ -82,7 +82,7 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 
 - ADC1 用于电池电压及 PA6 外部参考采样；ADC2 用于 PA2 压力传感器采样。
 - 电池电压先经 3:1 一阶低通；蓝牙上报百分比再使用 2% 死区和连续 3 次同值确认，抑制负载瞬态造成的小程序电量跳变。非充电仅允许百分比下降，充电仅允许百分比上升；首次有效采样立即上报。
-- 压力流程为“空闲→预充气→正式测试→结果保持→放气复位”：首次有效采样达到 5 mmHg 后开始固定 10 s 测试，测试期间气泵以 10 kHz PWM 继续充气；电池电压 4.20 V 至 3.50 V 时占空比由 40% 线性补偿至 60%，压力值闪烁并显示实时值。
+- 压力流程为“空闲→预充气→正式测试→结果保持→放气复位”：首次有效采样达到 5 mmHg 后开始固定 10 s 测试，测试期间气泵以 10 kHz PWM 继续充气；电池电压 4.20 V 至 3.50 V 时占空比由 43% 线性补偿至 47%，压力值闪烁并显示实时值。
 - 预充气最长 60 s；110 mmHg 为最高优先级停泵和终止测试上限。仅完整运行 10 s 的测试保留最大压力并主动上报；提前停止、放气、ADC 异常或超压均丢弃本轮数据。
 - BATEN（PB2）在开机、工作和充电电池会话期间持续有效，关机或故障安全状态关闭，避免周期性通断干扰模拟前端。
 - 压力换算值、过压阈值和阀门有效电平尚待硬件确认；未确认前不得以显示数值作为医疗或安全依据。
@@ -120,12 +120,13 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `TREATMENT_PULSE_WIDTH_US` | `300` | 单相桥臂有效脉宽，由定时器 PWM 比较值硬件关断。 |
 | `TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE` | `0` | `1` 时强制两路 DAC 输出固定码值，仅限联调。 |
 | `TREATMENT_DAC_FIXED_VALUE` | `2000` | 固定 DAC 联调码值；受上限 3800 编译检查保护。 |
-| `MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT` / `MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT` | `40` / `60` | 气泵 TIM4_CH4 在高/低电压端的 PWM 占空比。 |
+| `MOTOR_PWM_DUTY_HIGH_VOLTAGE_PERCENT` / `MOTOR_PWM_DUTY_LOW_VOLTAGE_PERCENT` | `43` / `47` | 气泵 TIM4_CH4 在高/低电压端的 PWM 占空比。 |
 | `MOTOR_PWM_HIGH_VOLTAGE_MV` / `MOTOR_PWM_LOW_VOLTAGE_MV` | `4200` / `3500` | 气泵占空比线性补偿的高/低电压端点；区间外钳位。 |
-| `PRESSURE_MAX_MMHG` | `110` | 最大压力保护上限；预充气或测试中达到即停泵、终止测试并丢弃数据。 |
-| `PRESSURE_TEST_SETPOINT_MMHG` | `5` | 首次有效采样达到该值时开始固定时长测试，气泵继续运行。 |
+| `PRESSURE_MAX_MMHG` | `150` | 最大压力保护上限；当前值由宏控制，达到即停泵并锁定充气至放气完成。 |
+| `PRESSURE_HALF_INFLATE_MMHG` | `36` | 本地短按默认半充盈目标；小程序也可使用 MODE_CONTROL 设定任意合法目标。 |
+| `PRESSURE_FULL_INFLATE_MMHG` | `52` | 全充盈推荐目标。 |
 | `PRESSURE_INFLATE_TIMEOUT_S` | `60` | 达到测试起点前的最长连续预充气时间。 |
-| `PRESSURE_TEST_DURATION_S` | `10` | 正常有效测试的固定时长。 |
+| `PRESSURE_TEST_DURATION_S` | `1800` | 本地默认测试/训练时长；小程序可设定不超过该值的会话时长。 |
 | `BLE_REMOTE_POWER_OFF_CONTROL_ENABLE` | `1` | 允许蓝牙 `POWER_LONG` 请求关机。 |
 | `BLE_REMOTE_TREATMENT_CONTROL_ENABLE` | `1` | 允许蓝牙治疗危险动作进入状态机。 |
 | `BLE_REMOTE_PRESSURE_CONTROL_ENABLE` | `1` | 允许蓝牙压力危险动作进入状态机。 |

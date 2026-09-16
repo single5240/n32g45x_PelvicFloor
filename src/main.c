@@ -322,6 +322,7 @@ typedef enum
 {
 	PRESSURE_PROCESS_IDLE = 0,
 	PRESSURE_PROCESS_INFLATING,
+	PRESSURE_PROCESS_WAITING,
 	PRESSURE_PROCESS_TESTING,
 	PRESSURE_PROCESS_RESULT,
 	PRESSURE_PROCESS_DEFLATING
@@ -341,6 +342,7 @@ typedef enum
 #define PRESSURE_DEFLATE_TIME_MS    3000U
 #define PRESSURE_INFLATE_TIMEOUT_MS (PRESSURE_INFLATE_TIMEOUT_S * 1000UL)
 #define PRESSURE_TEST_DURATION_MS   (PRESSURE_TEST_DURATION_S * 1000UL)
+#define PRESSURE_TEST_SAMPLE_PERIOD_MS (1000UL / PRESSURE_TEST_SAMPLE_HZ)
 
 #define BLE_RX_BUFFER_SIZE          512U
 #define BLE_RX_PROCESS_BUDGET_BYTES 128U
@@ -365,6 +367,7 @@ typedef enum
 #define BATTERY_DIVIDER_GAIN              2U
 #define BATTERY_SAMPLE_IDLE_TICKS         8U
 #define BATTERY_PRESSURE_IDLE_TICKS       48U
+#define BATTERY_PRESSURE_TEST_IDLE_TICKS  100U
 #define BATTERY_ADC_RETRY_TICKS           10U
 #define BATTERY_VALID_MIN_MV              2500U
 #define BATTERY_VALID_MAX_MV              5000U
@@ -379,7 +382,7 @@ typedef enum
 #define BATTERY_PERCENT_CONFIRM_COUNT     3U
 
 /* Pressure sensor: PA2 / ADC2 channel 11. Temporary nominal calibration. */
-#define PRESSURE_ADC_SAMPLE_PERIOD_MS      200U
+#define PRESSURE_ADC_SAMPLE_PERIOD_MS      PRESSURE_TEST_SAMPLE_PERIOD_MS
 #define PRESSURE_ADC_AVERAGE_PERIOD_MS     5000U
 #define PRESSURE_ADC_REFERENCE_MV          3300U
 #define PRESSURE_SENSOR_FULL_SCALE_KPA     40U
@@ -552,9 +555,13 @@ typedef enum
 typedef struct
 {
 	PressureProcessState_t state;
-	uint16_t maximum_mmhg;
+	uint16_t target_mmhg;
+	uint16_t average_mmhg;
 	uint16_t duration_seconds;
 	uint32_t test_start_ms;
+	uint32_t sample_sum_mmhg;
+	uint16_t sample_count;
+	uint16_t session_duration_s;
 } PressureProcessContext_t;
 
 /* SysTick 中断�? 1 ms 增加一次。中断和主循环共享，因此必须使用 volatile�? */
@@ -580,6 +587,7 @@ static uint8_t s_pressure_adc_pause_ticks;
 static uint8_t s_pressure_adc_value_valid;
 static PressureAction_t s_pressure_output_action;
 static PressureProcessContext_t s_pressure_process;
+static uint8_t s_local_key_locked;
 static uint8_t s_ble_pending_remote_danger;
 static uint8_t s_ble_remote_danger_active;
 static uint8_t s_ble_protocol_link_active;
@@ -623,9 +631,9 @@ static void Pressure_StopOutputs(void);
 static void Pressure_ApplyOutputs(void);
 static uint16_t Pressure_GetMotorPwmCompareCounts(void);
 static void Pressure_ResetProcess(void);
-static void Pressure_StartInflating(void);
+static void Pressure_StartInflating(uint16_t target_mmhg);
 static void Pressure_StartDeflating(void);
-static void Pressure_StartTest(uint16_t first_sample_mmhg);
+static void Pressure_StartTest(uint16_t duration_s);
 static uint8_t Pressure_TestDurationReached(void);
 static void Pressure_EndTest(const char *reason);
 static void Pressure_AbortProcess(const char *reason);
@@ -685,7 +693,7 @@ static uint16_t Pressure_CalculateMmHg(uint16_t adc_value,
                                        uint16_t *sensor_output_uv);
 static uint8_t Pressure_ReadFilteredAdc(uint16_t *adc_value);
 static void Pressure_UpdateLiveValue(uint16_t adc_value);
-static void PressureAdc_Task100ms(void);
+static void PressureAdc_Task50ms(void);
 static void BleName_Start(void);
 static void BleName_Stop(void);
 static void BleName_Task10ms(void);
@@ -698,7 +706,9 @@ static void BleSta_Task10ms(void);
 static void BleProtocol_RxTask10ms(void);
 static void BleProtocol_TxTask(void);
 static void BleProtocol_StopAll(void);
-static BleProtocolResult_t BleProtocol_SetStrength(uint8_t level);
+static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
+	                                                const uint8_t *data, uint8_t length);
+static BleProtocolResult_t BleProtocol_LocalKeyLock(uint8_t locked);
 static BleProtocolResult_t BleProtocol_UiAction(uint8_t action);
 static void BleProtocol_LinkState(uint8_t connected);
 static void BleProtocol_RemoteDangerTimeout(void);
@@ -1775,18 +1785,23 @@ static void LowPower_Task(void)
 static void Pressure_ResetProcess(void)
 {
 	s_pressure_process.state = PRESSURE_PROCESS_IDLE;
-	s_pressure_process.maximum_mmhg = 0U;
+	s_pressure_process.target_mmhg = 0U;
+	s_pressure_process.average_mmhg = 0U;
 	s_pressure_process.duration_seconds = 0U;
 	s_pressure_process.test_start_ms = 0U;
+	s_pressure_process.sample_sum_mmhg = 0U;
+	s_pressure_process.sample_count = 0U;
+	s_pressure_process.session_duration_s = PRESSURE_TEST_DURATION_S;
 	s_ui.pressure_value_blink = 0U;
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 	s_ui.pressure_action_ms = 0U;
 }
 
-static void Pressure_StartInflating(void)
+static void Pressure_StartInflating(uint16_t target_mmhg)
 {
 	Pressure_ResetProcess();
 	s_pressure_process.state = PRESSURE_PROCESS_INFLATING;
+	s_pressure_process.target_mmhg = target_mmhg;
 	s_ui.pressure_action = PRESSURE_ACTION_INFLATING;
 	s_ui.pressure_action_ms = PRESSURE_INFLATE_TIMEOUT_MS;
 	s_app.ui_dirty = 1U;
@@ -1808,12 +1823,15 @@ static void Pressure_StartDeflating(void)
 	LOG_I("t=%u pressure process=DEFLATING", s_system_tick_ms);
 }
 
-static void Pressure_StartTest(uint16_t first_sample_mmhg)
+static void Pressure_StartTest(uint16_t duration_s)
 {
 	s_pressure_process.state = PRESSURE_PROCESS_TESTING;
-	s_pressure_process.maximum_mmhg = first_sample_mmhg;
+	s_pressure_process.average_mmhg = 0U;
+	s_pressure_process.sample_sum_mmhg = 0U;
+	s_pressure_process.sample_count = 0U;
+	s_pressure_process.session_duration_s = duration_s;
 	s_pressure_process.test_start_ms = s_system_tick_ms;
-	s_ui.pressure_action = PRESSURE_ACTION_INFLATING;
+	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 	/* 测试时长只由 Pressure_TestDurationReached() 的 test_start_ms 计时。
 	 * 不再复用 pressure_action_ms 倒计时：否则它会与 test_start_ms 存在
 	 * 最多约一个节拍(10 ms)的竞争，导致 Control_Task10ms() 里的"超时中止"
@@ -1822,26 +1840,32 @@ static void Pressure_StartTest(uint16_t first_sample_mmhg)
 	s_ui.pressure_action_ms = 0U;
 	s_ui.pressure_value_blink = 1U;
 	s_app.ui_dirty = 1U;
-	LOG_I("t=%u pressure process=TESTING first=%u mmHg duration=%u s",
-	      s_system_tick_ms, first_sample_mmhg, PRESSURE_TEST_DURATION_S);
+	LOG_I("t=%u pressure process=TESTING duration=%u s",
+	      s_system_tick_ms, duration_s);
 }
 
 static uint8_t Pressure_TestDurationReached(void)
 {
 	return ((uint32_t)(s_system_tick_ms -
 	                   s_pressure_process.test_start_ms) >=
-	        PRESSURE_TEST_DURATION_MS) ? 1U : 0U;
+	        ((uint32_t)s_pressure_process.session_duration_s * 1000UL)) ? 1U : 0U;
 }
 
 static void Pressure_EndTest(const char *reason)
 {
 	uint32_t elapsed_ms;
 	uint32_t elapsed_seconds;
+	uint8_t end_reason = 0U;
 
 	if (s_pressure_process.state != PRESSURE_PROCESS_TESTING)
 	{
 		return;
 	}
+	if (reason[0] == 'm' && reason[1] == 'a') end_reason = 3U;
+	else if (reason[0] == 'm') end_reason = 1U;
+	else if (reason[0] == 'c') end_reason = 2U;
+	else if (reason[0] == 'x') end_reason = 3U;
+	else if (reason[0] == 's') end_reason = 4U;
 
 	elapsed_ms = (uint32_t)(s_system_tick_ms -
 	                         s_pressure_process.test_start_ms);
@@ -1849,7 +1873,13 @@ static void Pressure_EndTest(const char *reason)
 	s_ui.pressure_action = PRESSURE_ACTION_IDLE;
 	s_ui.pressure_action_ms = 0U;
 	s_ui.pressure_value_blink = 0U;
-	s_ui.pressure_value = s_pressure_process.maximum_mmhg;
+	if (s_pressure_process.sample_count != 0U)
+	{
+		s_pressure_process.average_mmhg = (uint16_t)((s_pressure_process.sample_sum_mmhg +
+		                                     (s_pressure_process.sample_count / 2U)) /
+		                                    s_pressure_process.sample_count);
+		s_ui.pressure_value = s_pressure_process.average_mmhg;
+	}
 	s_app.ui_dirty = 1U;
 	elapsed_seconds = elapsed_ms / 1000U;
 	if (elapsed_seconds > 65535U)
@@ -1860,12 +1890,15 @@ static void Pressure_EndTest(const char *reason)
 	if ((s_ble_name.protocol_active != 0U) &&
 	    (s_ble_sta.stable_connected != 0U))
 	{
-		BleProtocol_NotifyPressureResult(s_pressure_process.duration_seconds,
-		                                 s_pressure_process.maximum_mmhg);
+		BleProtocol_NotifyPressureSessionEnd(end_reason,
+			(s_pressure_process.sample_count != 0U) ? 1U : 0U,
+			s_pressure_process.duration_seconds,
+			(s_pressure_process.sample_count != 0U) ? s_pressure_process.average_mmhg : 0xFFFFU,
+			s_pressure_process.sample_count);
 	}
 	LOG_I("t=%u pressure test end reason=%s duration=%u ms max=%u mmHg",
 	      s_system_tick_ms, reason, elapsed_ms,
-	      s_pressure_process.maximum_mmhg);
+	      s_pressure_process.average_mmhg);
 }
 
 static void Pressure_AbortProcess(const char *reason)
@@ -1991,7 +2024,8 @@ static void App_Init(void)
 	Battery_InitModel();
 	Key_Init();
 	ble_callbacks.stop_all = BleProtocol_StopAll;
-	ble_callbacks.set_strength = BleProtocol_SetStrength;
+	ble_callbacks.mode_control = BleProtocol_ModeControl;
+	ble_callbacks.local_key_lock = BleProtocol_LocalKeyLock;
 	ble_callbacks.ui_action = BleProtocol_UiAction;
 	ble_callbacks.link_state = BleProtocol_LinkState;
 	ble_callbacks.remote_danger_timeout = BleProtocol_RemoteDangerTimeout;
@@ -2141,6 +2175,10 @@ static void App_StateExit(AppState_t state)
 			break;
 
 		case APP_STATE_PRESSURE:
+			if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
+			{
+				Pressure_EndTest("switch");
+			}
 			Pressure_StopOutputs();
 			break;
 
@@ -2371,6 +2409,10 @@ static void Key_Update(KeyId_t key_id)
 
 static void Key_PushShortEvent(KeyId_t key_id)
 {
+	if (s_local_key_locked != 0U)
+	{
+		return;
+	}
 	AppEvent_t event = APP_EVENT_NONE;
 
 	switch (key_id)
@@ -2407,6 +2449,10 @@ static void Key_PushShortEvent(KeyId_t key_id)
 
 static void Key_PushLongEvent(KeyId_t key_id)
 {
+	if ((s_local_key_locked != 0U) && (key_id != KEY_ID_POWER))
+	{
+		return;
+	}
 	if (key_id == KEY_ID_POWER)
 	{
 		(void)EventQueue_Push(APP_EVENT_POWER_LONG);
@@ -2607,18 +2653,15 @@ static void App_HandleEvent(AppEvent_t event)
 			{
 				if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
 				{
-					if (Pressure_TestDurationReached() != 0U)
-					{
-						Pressure_EndTest("completed");
-					}
-					else
-					{
-						Pressure_AbortProcess("manual");
-					}
+					Pressure_EndTest("manual");
 				}
 				else if (s_pressure_process.state == PRESSURE_PROCESS_INFLATING)
 				{
 					Pressure_AbortProcess("manual");
+				}
+				else if (s_pressure_process.state == PRESSURE_PROCESS_WAITING)
+				{
+					Pressure_StartTest(PRESSURE_TEST_DURATION_S);
 				}
 				else if (s_pressure_process.state != PRESSURE_PROCESS_IDLE)
 				{
@@ -2638,7 +2681,7 @@ static void App_HandleEvent(AppEvent_t event)
 				}
 				else
 				{
-					Pressure_StartInflating();
+					Pressure_StartInflating(PRESSURE_HALF_INFLATE_MMHG);
 				}
 			}
 			s_app.ui_dirty = 1U;
@@ -2707,14 +2750,7 @@ static void App_HandleEvent(AppEvent_t event)
 			    (s_pressure_process.state == PRESSURE_PROCESS_TESTING))
 			{
 				Ui_Beep(1U);
-				if (Pressure_TestDurationReached() != 0U)
-				{
-					Pressure_EndTest("completed");
-				}
-				else
-				{
-					Pressure_AbortProcess("remote");
-				}
+				Pressure_EndTest("remote");
 			}
 			break;
 
@@ -3055,7 +3091,7 @@ void AppUi_SetPressureResult(uint16_t value)
 	s_ui.pressure_value = result;
 	s_pressure_adc_value_valid = 1U;
 	s_pressure_process.state = PRESSURE_PROCESS_RESULT;
-	s_pressure_process.maximum_mmhg = result;
+	s_pressure_process.average_mmhg = result;
 	Pressure_ApplyOutputs();
 	s_app.ui_dirty = 1U;
 	LOG_I("t=%u pressure result=%u mmHg", s_system_tick_ms,
@@ -3064,19 +3100,7 @@ void AppUi_SetPressureResult(uint16_t value)
 
 void AppUi_InflationCompleted(void)
 {
-	if (s_pressure_process.state == PRESSURE_PROCESS_INFLATING)
-	{
-		if ((s_pressure_adc_value_valid != 0U) &&
-		    (s_ui.pressure_value >= PRESSURE_TEST_SETPOINT_MMHG) &&
-		    (s_ui.pressure_value < PRESSURE_MAX_MMHG))
-		{
-			Pressure_StartTest(s_ui.pressure_value);
-		}
-		else
-		{
-			Pressure_AbortProcess("completion below setpoint");
-		}
-	}
+	/* Pressure state changes are driven by fresh ADC2 samples. */
 }
 
 static void Battery_InitModel(void)
@@ -3518,9 +3542,17 @@ static uint8_t Battery_Task100ms(void)
 		}
 
 		s_battery.measurement_pending = 0U;
-		s_battery.next_sample_ticks = (pressure_mode != 0U) ?
-		                              BATTERY_PRESSURE_IDLE_TICKS :
-		                              BATTERY_SAMPLE_IDLE_TICKS;
+		if ((pressure_mode != 0U) &&
+		    (s_pressure_process.state == PRESSURE_PROCESS_TESTING))
+		{
+			s_battery.next_sample_ticks = BATTERY_PRESSURE_TEST_IDLE_TICKS;
+		}
+		else
+		{
+			s_battery.next_sample_ticks = (pressure_mode != 0U) ?
+			                              BATTERY_PRESSURE_IDLE_TICKS :
+			                              BATTERY_SAMPLE_IDLE_TICKS;
+		}
 		return 1U;
 	}
 
@@ -3653,21 +3685,46 @@ static void Pressure_UpdateLiveValue(uint16_t adc_value)
 	/* The hard limit always takes priority over the normal setpoint. */
 	if ((pressure_mmhg >= PRESSURE_MAX_MMHG) &&
 	    ((s_pressure_process.state == PRESSURE_PROCESS_INFLATING) ||
+	     (s_pressure_process.state == PRESSURE_PROCESS_WAITING) ||
 	     (s_pressure_process.state == PRESSURE_PROCESS_TESTING)))
 	{
-		Pressure_AbortProcess("maximum pressure");
+		if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
+		{
+			Pressure_EndTest("maximum pressure");
+		}
+		else
+		{
+			s_pressure_process.state = PRESSURE_PROCESS_RESULT;
+			s_pressure_process.average_mmhg = pressure_mmhg;
+			s_ui.pressure_value = pressure_mmhg;
+			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
+			s_ui.pressure_action_ms = 0U;
+			s_ui.pressure_value_blink = 0U;
+			s_app.ui_dirty = 1U;
+		}
 	}
-	else if ((pressure_mmhg >= PRESSURE_TEST_SETPOINT_MMHG) &&
-	         (s_pressure_process.state == PRESSURE_PROCESS_INFLATING))
+	else if ((s_pressure_process.state == PRESSURE_PROCESS_INFLATING) &&
+	         (pressure_mmhg >= s_pressure_process.target_mmhg))
 	{
-		Pressure_StartTest(pressure_mmhg);
+		s_pressure_process.state = PRESSURE_PROCESS_WAITING;
+		s_ui.pressure_action = PRESSURE_ACTION_IDLE;
+		s_ui.pressure_action_ms = 0U;
+		s_app.ui_dirty = 1U;
 	}
 
 	if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
 	{
-		if (pressure_mmhg > s_pressure_process.maximum_mmhg)
+		s_pressure_process.duration_seconds = (uint16_t)
+			((uint32_t)(s_system_tick_ms - s_pressure_process.test_start_ms) / 1000U);
+		if (s_pressure_process.sample_count != 0xFFFFU)
 		{
-			s_pressure_process.maximum_mmhg = pressure_mmhg;
+			s_pressure_process.sample_sum_mmhg += pressure_mmhg;
+			s_pressure_process.sample_count++;
+		}
+		if ((s_ble_name.protocol_active != 0U) &&
+		    (s_ble_sta.stable_connected != 0U))
+		{
+			BleProtocol_NotifyPressureSample((uint8_t)pressure_mmhg);
 		}
 	}
 	else if ((s_pressure_process.state == PRESSURE_PROCESS_RESULT) ||
@@ -3689,7 +3746,7 @@ static void Pressure_UpdateLiveValue(uint16_t adc_value)
 /*
  * ADC2 is dedicated to pressure sampling; ADC1 remains owned by the battery.
  */
-static void PressureAdc_Task100ms(void)
+static void PressureAdc_Task50ms(void)
 {
 	uint32_t now = s_system_tick_ms;
 	uint16_t raw_value;
@@ -4278,10 +4335,69 @@ static void BleProtocol_StopAll(void)
 	LOG_W("t=%u BLE STOP_ALL applied", s_system_tick_ms);
 }
 
-static BleProtocolResult_t BleProtocol_SetStrength(uint8_t level)
+static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
+	                                                const uint8_t *data, uint8_t length)
 {
+	uint8_t level;
 	uint8_t channel = s_ui.selected_channel;
 	uint8_t *power;
+	uint16_t value;
+	if ((mode == 1U) && (action == 1U))
+	{
+		if (length != 1U)
+		{
+			return BLE_RESULT_BAD_LENGTH;
+		}
+		level = data[0];
+	}
+	else if (mode == 2U)
+	{
+		if ((s_app.state != APP_STATE_PRESSURE) || (s_ui.charger_connected != 0U) ||
+		    (s_ble_sta.stable_connected == 0U))
+		{
+			return (s_app.state != APP_STATE_PRESSURE) ? BLE_RESULT_STATE_CONFLICT :
+			       ((s_ui.charger_connected != 0U) ? BLE_RESULT_CHARGING_LOCK : BLE_RESULT_SAFETY_LOCK);
+		}
+		if (action == 1U)
+		{
+			if (length != 2U) return BLE_RESULT_BAD_LENGTH;
+			if ((s_pressure_process.state != PRESSURE_PROCESS_IDLE) &&
+			    (s_pressure_process.state != PRESSURE_PROCESS_INFLATING) &&
+			    (s_pressure_process.state != PRESSURE_PROCESS_WAITING)) return BLE_RESULT_STATE_CONFLICT;
+			value = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
+			if ((value == 0U) || (value >= PRESSURE_MAX_MMHG)) return BLE_RESULT_BAD_PARAMETER;
+			if ((s_pressure_process.state == PRESSURE_PROCESS_RESULT) ||
+			    (s_ui.pressure_value >= value)) return BLE_RESULT_SAFETY_LOCK;
+			Pressure_StartInflating(value);
+			return BLE_RESULT_OK;
+		}
+		if (action == 2U)
+		{
+			if (length != 2U) return BLE_RESULT_BAD_LENGTH;
+			if (s_pressure_process.state != PRESSURE_PROCESS_WAITING) return BLE_RESULT_STATE_CONFLICT;
+			value = (uint16_t)data[0] | ((uint16_t)data[1] << 8U);
+			if ((value == 0U) || (value > PRESSURE_TEST_DURATION_S)) return BLE_RESULT_BAD_PARAMETER;
+			Pressure_StartTest(value);
+			return BLE_RESULT_OK;
+		}
+		if (action == 3U)
+		{
+			if ((length != 0U) || (s_pressure_process.state != PRESSURE_PROCESS_TESTING)) return BLE_RESULT_STATE_CONFLICT;
+			Pressure_EndTest("remote");
+			return BLE_RESULT_OK;
+		}
+		if (action == 4U)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+			Pressure_StartDeflating();
+			return BLE_RESULT_OK;
+		}
+		return BLE_RESULT_BAD_PARAMETER;
+	}
+	else
+	{
+		return BLE_RESULT_BAD_PARAMETER;
+	}
 
 	if (level > UI_MAX_POWER)
 	{
@@ -4319,6 +4435,17 @@ static BleProtocolResult_t BleProtocol_SetStrength(uint8_t level)
 	LOG_I("t=%u BLE set strength ch=%u mode=P%u level=%u",
 	      s_system_tick_ms, (uint8_t)(channel + 1U),
 	      (uint8_t)(s_ui.formula + 1U), level);
+	return BLE_RESULT_OK;
+}
+
+static BleProtocolResult_t BleProtocol_LocalKeyLock(uint8_t locked)
+{
+	if (s_ble_sta.stable_connected == 0U)
+	{
+		return BLE_RESULT_SAFETY_LOCK;
+	}
+	s_local_key_locked = (locked != 0U) ? 1U : 0U;
+	s_app.ui_dirty = 1U;
 	return BLE_RESULT_OK;
 }
 
@@ -4401,6 +4528,10 @@ static BleProtocolResult_t BleProtocol_UiAction(uint8_t action)
 static void BleProtocol_LinkState(uint8_t connected)
 {
 	s_ble_protocol_link_active = (connected != 0U) ? 1U : 0U;
+	if (connected == 0U)
+	{
+		s_local_key_locked = 0U;
+	}
 }
 
 static void BleProtocol_RemoteDangerTimeout(void)
@@ -4484,9 +4615,28 @@ static void BleProtocol_GetStatus(uint32_t now_ms,
 	{
 		flags |= 0x40U;
 	}
+	if (s_local_key_locked != 0U)
+	{
+		flags |= 0x80U;
+	}
 	status[12] = flags;
 	status[13] = 0U;
 	status[14] = 0U;
+	status[15] = (uint8_t)s_pressure_process.state;
+	status[16] = (uint8_t)(s_pressure_process.target_mmhg & 0xFFU);
+	status[17] = (uint8_t)(s_pressure_process.target_mmhg >> 8U);
+	if (s_pressure_process.state == PRESSURE_PROCESS_RESULT)
+	{
+		status[18] = (uint8_t)(s_pressure_process.average_mmhg & 0xFFU);
+		status[19] = (uint8_t)(s_pressure_process.average_mmhg >> 8U);
+	}
+	else
+	{
+		status[18] = 0xFFU;
+		status[19] = 0xFFU;
+	}
+	status[20] = (uint8_t)(s_pressure_process.duration_seconds & 0xFFU);
+	status[21] = (uint8_t)(s_pressure_process.duration_seconds >> 8U);
 }
 
 static void BleSta_Task10ms(void)
@@ -4828,6 +4978,7 @@ static void Control_Task10ms(void)
 
 static void Ui_Task50ms(void)
 {
+	PressureAdc_Task50ms();
 	if ((s_app.state == APP_STATE_THERAPY) ||
 	    (s_app.state == APP_STATE_PRESSURE))
 	{
@@ -4852,11 +5003,11 @@ static void Ui_Task50ms(void)
 static void Sensor_Task100ms(void)
 {
 	if ((Battery_Task100ms() != 0U) &&
-	    (s_app.state == APP_STATE_PRESSURE))
+	    (s_app.state == APP_STATE_PRESSURE) &&
+	    (s_pressure_process.state != PRESSURE_PROCESS_TESTING))
 	{
 		s_pressure_adc_pause_ticks = PRESSURE_ADC_BATTERY_PAUSE_TICKS;
 	}
-	PressureAdc_Task100ms();
 }
 
 static void Power_Task1000ms(void)

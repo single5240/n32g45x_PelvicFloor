@@ -195,10 +195,12 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 /* Pressure-test limits. Values are temporary until sensor and pneumatic
  * hardware calibration has been completed on the target board. */
-#define PRESSURE_MAX_MMHG                    110U
-#define PRESSURE_TEST_SETPOINT_MMHG            5U
+#define PRESSURE_MAX_MMHG                    150U
+#define PRESSURE_HALF_INFLATE_MMHG            36U
+#define PRESSURE_FULL_INFLATE_MMHG            52U
 #define PRESSURE_INFLATE_TIMEOUT_S            60U
-#define PRESSURE_TEST_DURATION_S              10U
+#define PRESSURE_TEST_DURATION_S            1800U
+#define PRESSURE_TEST_SAMPLE_HZ               20U
 
 #if (TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE > 1U)
 #error "TREATMENT_DAC_FIXED_VALUE_TEST_ENABLE must be 0 or 1"
@@ -226,14 +228,16 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 #error "TREATMENT_DAC_FIXED_VALUE must not exceed 3800"
 #endif
 
-#if (PRESSURE_MAX_MMHG == 0U) || \
-    (PRESSURE_TEST_SETPOINT_MMHG == 0U) || \
-    (PRESSURE_TEST_SETPOINT_MMHG >= PRESSURE_MAX_MMHG)
-#error "PRESSURE_TEST_SETPOINT_MMHG must be within 1..PRESSURE_MAX_MMHG-1"
+#if (PRESSURE_MAX_MMHG == 0U) || (PRESSURE_MAX_MMHG > 255U) || \
+    (PRESSURE_HALF_INFLATE_MMHG == 0U) || \
+    (PRESSURE_HALF_INFLATE_MMHG >= PRESSURE_FULL_INFLATE_MMHG) || \
+    (PRESSURE_FULL_INFLATE_MMHG >= PRESSURE_MAX_MMHG)
+#error "Pressure targets must satisfy 0 < half < full < max <= 255"
 #endif
 
 #if (PRESSURE_INFLATE_TIMEOUT_S == 0U) || \
-    (PRESSURE_TEST_DURATION_S == 0U)
+    (PRESSURE_TEST_DURATION_S == 0U) || (PRESSURE_TEST_SAMPLE_HZ == 0U) || \
+    ((1000U % PRESSURE_TEST_SAMPLE_HZ) != 0U)
 #error "Pressure durations must be non-zero"
 #endif
 

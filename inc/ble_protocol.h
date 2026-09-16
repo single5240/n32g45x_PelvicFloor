@@ -8,12 +8,14 @@ extern "C" {
 #include <stdint.h>
 
 #define BLE_PROTOCOL_VERSION          0x11U
-#define BLE_PROTOCOL_STATUS_LENGTH    15U
-#define BLE_COMMAND_SET_STRENGTH       0x01U
+#define BLE_PROTOCOL_STATUS_LENGTH    22U
+#define BLE_COMMAND_MODE_CONTROL       0x02U
+#define BLE_COMMAND_LOCAL_KEY_LOCK     0x03U
 #define BLE_COMMAND_UI_ACTION         0x10U
 #define BLE_COMMAND_STATUS_NOTIFY     0x91U
-#define BLE_COMMAND_PRESSURE_RESULT_NOTIFY 0x92U
+#define BLE_COMMAND_PRESSURE_SESSION_END_NOTIFY 0x93U
 #define BLE_COMMAND_THERAPY_END_NOTIFY 0x94U
+#define BLE_COMMAND_PRESSURE_SAMPLE_NOTIFY 0x95U
 
 typedef enum
 {
@@ -31,7 +33,9 @@ typedef enum
 typedef struct
 {
 	void (*stop_all)(void);
-	BleProtocolResult_t (*set_strength)(uint8_t level);
+	BleProtocolResult_t (*mode_control)(uint8_t mode, uint8_t action,
+	                                    const uint8_t *data, uint8_t length);
+	BleProtocolResult_t (*local_key_lock)(uint8_t locked);
 	BleProtocolResult_t (*ui_action)(uint8_t action);
 	void (*link_state)(uint8_t connected);
 	void (*remote_danger_timeout)(void);
@@ -62,8 +66,12 @@ void BleProtocol_InputByte(uint8_t data, uint32_t now_ms);
 void BleProtocol_Task(uint32_t now_ms);
 void BleProtocol_CompleteUiAction(uint32_t now_ms);
 void BleProtocol_NotifyStatus(uint32_t now_ms);
-void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
-                                      uint16_t pressure_max);
+void BleProtocol_NotifyPressureSessionEnd(uint8_t end_reason,
+                                          uint8_t result_valid,
+                                          uint16_t duration_seconds,
+                                          uint16_t average_pressure,
+                                          uint16_t sample_count);
+void BleProtocol_NotifyPressureSample(uint8_t pressure_mmhg);
 void BleProtocol_NotifyTherapyEnd(uint8_t end_type,
                                   uint8_t channel_mask,
                                   uint8_t pulse_mode,

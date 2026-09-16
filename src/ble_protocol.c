@@ -7,7 +7,9 @@
 #define BLE_MAX_DATA_LENGTH            32U
 #define BLE_MAX_FRAME_LENGTH           (6U + BLE_MAX_DATA_LENGTH)
 #define BLE_RESPONSE_COMMAND           0xE0U
-#define BLE_COMMAND_STOP_ALL            0x08U
+#define BLE_COMMAND_MODE_CONTROL         0x02U
+#define BLE_COMMAND_LOCAL_KEY_LOCK       0x03U
+#define BLE_COMMAND_STOP_ALL             0x08U
 #define BLE_COMMAND_UI_ACTION           0x10U
 #define BLE_COMMAND_GET_STATUS          0x71U
 #define BLE_COMMAND_LINK_KEEPALIVE      0x90U
@@ -60,7 +62,7 @@ static BleProtocolResult_t BleCommand_StopAll(const uint8_t *data,
 	                                           uint32_t now_ms,
 	                                           uint8_t *response,
 	                                           uint8_t *response_length);
-static BleProtocolResult_t BleCommand_SetStrength(const uint8_t *data,
+static BleProtocolResult_t BleCommand_ModeControl(const uint8_t *data,
                                                  uint8_t length,
                                                  uint32_t now_ms,
                                                  uint8_t *response,
@@ -81,9 +83,16 @@ static BleProtocolResult_t BleCommand_Keepalive(const uint8_t *data,
 	                                             uint8_t *response,
 	                                             uint8_t *response_length);
 
+static BleProtocolResult_t BleCommand_LocalKeyLock(const uint8_t *data,
+	                                                uint8_t length,
+	                                                uint32_t now_ms,
+	                                                uint8_t *response,
+	                                                uint8_t *response_length);
+
 static const BleCommandEntry_t s_command_table[] =
 {
-	{BLE_COMMAND_SET_STRENGTH,   1U, BleCommand_SetStrength},
+	{BLE_COMMAND_MODE_CONTROL,   0xFFU, BleCommand_ModeControl},
+	{BLE_COMMAND_LOCAL_KEY_LOCK, 1U, BleCommand_LocalKeyLock},
 	{BLE_COMMAND_STOP_ALL,       0U, BleCommand_StopAll},
 	{BLE_COMMAND_UI_ACTION,      1U, BleCommand_UiAction},
 	{BLE_COMMAND_GET_STATUS,     0U, BleCommand_GetStatus},
@@ -225,7 +234,8 @@ static void BleProtocol_Dispatch(const uint8_t *frame, uint32_t now_ms)
 	{
 		if (s_command_table[index].command == command)
 		{
-			if (length != s_command_table[index].request_length)
+			if ((s_command_table[index].request_length != 0xFFU) &&
+			    (length != s_command_table[index].request_length))
 			{
 				s_ble.stats.command_length_errors++;
 				result = BLE_RESULT_BAD_LENGTH;
@@ -421,17 +431,30 @@ void BleProtocol_NotifyStatus(uint32_t now_ms)
 	                              BLE_PROTOCOL_STATUS_LENGTH);
 }
 
-void BleProtocol_NotifyPressureResult(uint16_t duration_seconds,
-                                      uint16_t pressure_max)
+void BleProtocol_NotifyPressureSessionEnd(uint8_t end_reason,
+                                          uint8_t result_valid,
+                                          uint16_t duration_seconds,
+                                          uint16_t average_pressure,
+                                          uint16_t sample_count)
 {
-	uint8_t data[4];
+	uint8_t data[8];
 
-	data[0] = (uint8_t)(duration_seconds & 0xFFU);
-	data[1] = (uint8_t)(duration_seconds >> 8U);
-	data[2] = (uint8_t)(pressure_max & 0xFFU);
-	data[3] = (uint8_t)(pressure_max >> 8U);
-	BleProtocol_QueueNotification(BLE_COMMAND_PRESSURE_RESULT_NOTIFY,
+	data[0] = end_reason;
+	data[1] = result_valid;
+	data[2] = (uint8_t)(duration_seconds & 0xFFU);
+	data[3] = (uint8_t)(duration_seconds >> 8U);
+	data[4] = (uint8_t)(average_pressure & 0xFFU);
+	data[5] = (uint8_t)(average_pressure >> 8U);
+	data[6] = (uint8_t)(sample_count & 0xFFU);
+	data[7] = (uint8_t)(sample_count >> 8U);
+	BleProtocol_QueueNotification(BLE_COMMAND_PRESSURE_SESSION_END_NOTIFY,
 	                              data, (uint8_t)sizeof(data));
+}
+
+void BleProtocol_NotifyPressureSample(uint8_t pressure_mmhg)
+{
+	BleProtocol_QueueNotification(BLE_COMMAND_PRESSURE_SAMPLE_NOTIFY,
+	                              &pressure_mmhg, 1U);
 }
 
 void BleProtocol_NotifyTherapyEnd(uint8_t end_type,
@@ -515,7 +538,7 @@ static BleProtocolResult_t BleCommand_StopAll(const uint8_t *data,
 	return BLE_RESULT_OK;
 }
 
-static BleProtocolResult_t BleCommand_SetStrength(const uint8_t *data,
+static BleProtocolResult_t BleCommand_ModeControl(const uint8_t *data,
                                                  uint8_t length,
                                                  uint32_t now_ms,
                                                  uint8_t *response,
@@ -523,14 +546,36 @@ static BleProtocolResult_t BleCommand_SetStrength(const uint8_t *data,
 {
 	BleProtocolResult_t result;
 
-	(void)length;
-	if ((s_ble.callbacks.set_strength == 0) ||
+	if ((length < 2U) || (s_ble.callbacks.mode_control == 0) ||
 	    (s_ble.callbacks.get_status == 0))
 	{
-		return BLE_RESULT_INTERNAL_ERROR;
+		return (length < 2U) ? BLE_RESULT_BAD_LENGTH : BLE_RESULT_INTERNAL_ERROR;
 	}
 
-	result = s_ble.callbacks.set_strength(data[0]);
+	result = s_ble.callbacks.mode_control(data[0], data[1], &data[2],
+	                                       (uint8_t)(length - 2U));
+	if (result == BLE_RESULT_OK)
+	{
+		s_ble.callbacks.get_status(now_ms, response);
+		*response_length = BLE_PROTOCOL_STATUS_LENGTH;
+	}
+	return result;
+}
+
+static BleProtocolResult_t BleCommand_LocalKeyLock(const uint8_t *data,
+	                                                uint8_t length,
+	                                                uint32_t now_ms,
+	                                                uint8_t *response,
+	                                                uint8_t *response_length)
+{
+	BleProtocolResult_t result;
+	(void)length;
+	if ((data[0] > 1U) || (s_ble.callbacks.local_key_lock == 0) ||
+	    (s_ble.callbacks.get_status == 0))
+	{
+		return (data[0] > 1U) ? BLE_RESULT_BAD_PARAMETER : BLE_RESULT_INTERNAL_ERROR;
+	}
+	result = s_ble.callbacks.local_key_lock(data[0]);
 	if (result == BLE_RESULT_OK)
 	{
 		s_ble.callbacks.get_status(now_ms, response);
