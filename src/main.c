@@ -1814,7 +1814,12 @@ static void Pressure_StartTest(uint16_t first_sample_mmhg)
 	s_pressure_process.maximum_mmhg = first_sample_mmhg;
 	s_pressure_process.test_start_ms = s_system_tick_ms;
 	s_ui.pressure_action = PRESSURE_ACTION_INFLATING;
-	s_ui.pressure_action_ms = PRESSURE_TEST_DURATION_MS;
+	/* 测试时长只由 Pressure_TestDurationReached() 的 test_start_ms 计时。
+	 * 不再复用 pressure_action_ms 倒计时：否则它会与 test_start_ms 存在
+	 * 最多约一个节拍(10 ms)的竞争，导致 Control_Task10ms() 里的"超时中止"
+	 * 先于"正常完成"触发，结果被丢弃、状态回到 IDLE，压力值继续跟随气囊
+	 * 气压实时变化，而不是在闪动结束后保持最大结果。 */
+	s_ui.pressure_action_ms = 0U;
 	s_ui.pressure_value_blink = 1U;
 	s_app.ui_dirty = 1U;
 	LOG_I("t=%u pressure process=TESTING first=%u mmHg duration=%u s",
