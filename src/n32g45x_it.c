@@ -119,6 +119,10 @@ uint32_t E2_Step = 0;
 uint16_t Pwr2_ADCValue;
 
 uint16_t Pwr1_ADCValue;
+static volatile uint8_t s_treatment_ch1_zero_dac;
+static volatile uint8_t s_treatment_ch2_zero_dac;
+static volatile uint8_t s_treatment_ch1_enabled;
+static volatile uint8_t s_treatment_ch2_enabled;
 uint16_t E1_Power = 0;
 uint16_t E2_Power = 0;
 
@@ -539,7 +543,57 @@ void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled)
 		TIM_ConfigInt(timer, TIM_INT_CC3, ENABLE);
 		TIM_Enable(timer, ENABLE);
 	}
+	if (channel == TREATMENT_CHANNEL_1)
+	{
+		s_treatment_ch1_enabled = (enabled != 0U) ? 1U : 0U;
+	}
+	else
+	{
+		s_treatment_ch2_enabled = (enabled != 0U) ? 1U : 0U;
+	}
 	__set_PRIMASK(primask);
+}
+
+void TreatmentPulse_SetChannelZeroDac(uint8_t channel, uint8_t enabled)
+{
+	uint32_t primask = __get_PRIMASK();
+
+	if ((channel != TREATMENT_CHANNEL_1) && (channel != TREATMENT_CHANNEL_2))
+	{
+		return;
+	}
+
+	__disable_irq();
+	if (channel == TREATMENT_CHANNEL_1)
+	{
+		s_treatment_ch1_zero_dac = (enabled != 0U) ? 1U : 0U;
+		if (enabled != 0U)
+		{
+			DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
+		}
+	}
+	else
+	{
+		s_treatment_ch2_zero_dac = (enabled != 0U) ? 1U : 0U;
+		if (enabled != 0U)
+		{
+			DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
+		}
+	}
+	__set_PRIMASK(primask);
+}
+
+uint8_t TreatmentPulse_IsChannelEnabled(uint8_t channel)
+{
+	if (channel == TREATMENT_CHANNEL_1)
+	{
+		return s_treatment_ch1_enabled;
+	}
+	if (channel == TREATMENT_CHANNEL_2)
+	{
+		return s_treatment_ch2_enabled;
+	}
+	return 0U;
 }
 
 void TIM1_CC_IRQHandler(void)
@@ -552,8 +606,14 @@ void TIM1_CC_IRQHandler(void)
 		TIM_ClrIntPendingBit(TIM1, TIM_INT_CC3);
 		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
 		__DSB();
-		if (Pwr1)									////
+		if ((Pwr1 != 0U) || (s_treatment_ch1_zero_dac != 0U))									////
 		{
+			if (s_treatment_ch1_zero_dac != 0U)
+			{
+				DAC_SetCh2Data(DAC_ALIGN_R_12BIT, 0U);
+			}
+			else
+			{
 			E1_Step++;
 			E1_Power = TreatmentPulse_LookupPower(Pwr1);
 			switch (Wave_SelectA)
@@ -859,6 +919,7 @@ void TIM1_CC_IRQHandler(void)
 #if (TREATMENT_DAC_OUTPUT_ENABLE != 0U)
 			DAC_SetCh2Data(DAC_ALIGN_R_12BIT, ChA_DACValue);
 #endif
+			}
 			Tim1_Count++;
 			if (Tim1_Count == 1U)
 			{
@@ -896,8 +957,14 @@ void TIM8_CC_IRQHandler(void)
 		TIM_ClrIntPendingBit(TIM8, TIM_INT_CC3);
 		/* Ensure the peripheral has observed the clear before lengthy ISR work. */
 		__DSB();
-		if (Pwr2)
+		if ((Pwr2 != 0U) || (s_treatment_ch2_zero_dac != 0U))
 		{
+			if (s_treatment_ch2_zero_dac != 0U)
+			{
+				DAC_SetCh1Data(DAC_ALIGN_R_12BIT, 0U);
+			}
+			else
+			{
 			E2_Step++;
 			E2_Power = TreatmentPulse_LookupPower(Pwr2);
 			switch (Wave_SelectB)
@@ -1203,6 +1270,7 @@ void TIM8_CC_IRQHandler(void)
 #if (TREATMENT_DAC_OUTPUT_ENABLE != 0U)
 			DAC_SetCh1Data(DAC_ALIGN_R_12BIT, ChB_DACValue);
 #endif
+			}
 
 			Tim8_Count++;
 			if (Tim8_Count == 1U)

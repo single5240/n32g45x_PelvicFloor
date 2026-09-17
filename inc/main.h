@@ -313,6 +313,8 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 void TreatmentPulse_SetMode(uint8_t mode);
 void TreatmentPulse_PrepareChannel(uint8_t channel, uint8_t mode);
 void TreatmentPulse_SetChannelEnabled(uint8_t channel, uint8_t enabled);
+void TreatmentPulse_SetChannelZeroDac(uint8_t channel, uint8_t enabled);
+uint8_t TreatmentPulse_IsChannelEnabled(uint8_t channel);
 void App_FaultSafeShutdownISR(void);
 void App_BleRxByteISR(uint8_t data);
 void App_BleUsartErrorISR(uint8_t error_flags);

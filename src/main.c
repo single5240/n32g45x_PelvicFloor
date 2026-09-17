@@ -332,6 +332,9 @@ typedef enum
 #define BLE_THERAPY_ACTION_SELECT_CHANNEL   4U
 #define BLE_THERAPY_ACTION_STOP             5U
 #define BLE_THERAPY_ACTION_SWITCH_PRESSURE  6U
+#define BLE_THERAPY_ACTION_START             7U
+#define BLE_REMOTE_THERAPY_CH1                0x01U
+#define BLE_REMOTE_THERAPY_CH2                0x02U
 #define BLE_PRESSURE_ACTION_INFLATE          1U
 #define BLE_PRESSURE_ACTION_START_SESSION    2U
 #define BLE_PRESSURE_ACTION_STOP_SESSION     3U
@@ -569,6 +572,7 @@ static PressureProcessContext_t s_pressure_process;
 static uint8_t s_local_key_locked;
 static uint8_t s_ble_pending_remote_danger;
 static uint8_t s_ble_remote_danger_active;
+static uint8_t s_ble_remote_therapy_channels;
 static uint8_t s_ble_protocol_link_active;
 static uint8_t s_ble_power_off_pending;
 static uint32_t s_ble_power_off_request_ms;
@@ -1297,12 +1301,15 @@ static void Treatment_StopOutputs(void)
 	/* UI 目标值和遗留波形中断读取的档位同时归零�? */
 	s_ui.power_ch1 = 0U;
 	s_ui.power_ch2 = 0U;
+	s_ble_remote_therapy_channels = 0U;
 	Pwr1 = 0U;
 	Pwr2 = 0U;
 	Tim1_Count = 0U;
 	Tim8_Count = 0U;
 	TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 0U);
 	TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 0U);
+	TreatmentPulse_SetChannelZeroDac(TREATMENT_CHANNEL_1, 0U);
+	TreatmentPulse_SetChannelZeroDac(TREATMENT_CHANNEL_2, 0U);
 
 	/* Keep the gated 300 us pulse scheme ready for the next treatment. */
 	TIM_SetCmp1(TIM1, TREATMENT_BRIDGE_PWM_COMPARE);
@@ -2544,6 +2551,10 @@ static void App_HandleEvent(AppEvent_t event)
 	/* Charger events update power presence without interrupting active work. */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
 	{
+		/* Charging is a global hazardous-output interlock, regardless of
+		 * whether the current treatment was started locally or by BLE. */
+		Treatment_StopOutputs();
+		Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 		if (s_app.state == APP_STATE_PRESSURE)
 		{
 			Pressure_StopOutputs();
@@ -2694,19 +2705,22 @@ static void App_HandleEvent(AppEvent_t event)
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				Ui_Beep(1U);
-				/* 倒计时自然结束后保持显示 0，直到用户再次增加强度开始新疗程。 */
-				if ((s_ui.power_ch1 == 0U) &&
-				    (s_ui.power_ch2 == 0U) &&
-				    (s_ui.remaining_minutes == 0U) &&
-				    (s_ui.remaining_seconds == 0U))
+				if (s_ui.charger_connected == 0U)
 				{
-					s_ui.remaining_minutes = s_ui.set_minutes;
-				}
-				uint8_t *power = (s_ui.selected_channel == 0U) ?
-				                 &s_ui.power_ch1 : &s_ui.power_ch2;
-				if (*power < UI_MAX_POWER)
-				{
-					(*power)++;
+					/* 倒计时自然结束后保持显示 0，直到用户再次增加强度开始新疗程。 */
+					if ((s_ui.power_ch1 == 0U) &&
+					    (s_ui.power_ch2 == 0U) &&
+					    (s_ui.remaining_minutes == 0U) &&
+					    (s_ui.remaining_seconds == 0U))
+					{
+						s_ui.remaining_minutes = s_ui.set_minutes;
+					}
+					uint8_t *power = (s_ui.selected_channel == 0U) ?
+					                 &s_ui.power_ch1 : &s_ui.power_ch2;
+					if (*power < UI_MAX_POWER)
+					{
+						(*power)++;
+					}
 				}
 				// LOG_I("t=%u treatment adjust ch=%u mode=P%u action=PLUS level=%u dac=ON",
 				//       s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
@@ -2719,11 +2733,14 @@ static void App_HandleEvent(AppEvent_t event)
 			if (s_app.state == APP_STATE_THERAPY)
 			{
 				Ui_Beep(1U);
-				uint8_t *power = (s_ui.selected_channel == 0U) ?
-				                 &s_ui.power_ch1 : &s_ui.power_ch2;
-				if (*power > 0U)
+				if (s_ui.charger_connected == 0U)
 				{
-					(*power)--;
+					uint8_t *power = (s_ui.selected_channel == 0U) ?
+					                 &s_ui.power_ch1 : &s_ui.power_ch2;
+					if (*power > 0U)
+					{
+						(*power)--;
+					}
 				}
 				// LOG_I("t=%u treatment adjust ch=%u mode=P%u action=MINUS level=%u dac=ON",
 				//       s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
@@ -3935,7 +3952,8 @@ static void Ui_BuzzerTask10ms(void)
 static void Ui_Countdown1s(void)
 {
 	if ((s_app.state != APP_STATE_THERAPY) ||
-	    ((s_ui.power_ch1 == 0U) && (s_ui.power_ch2 == 0U)))
+	    ((s_ui.power_ch1 == 0U) && (s_ui.power_ch2 == 0U) &&
+	     (s_ble_remote_therapy_channels == 0U)))
 	{
 		return;
 	}
@@ -4374,6 +4392,36 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 			      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U),
 			      (uint8_t)(s_ui.formula + 1U), level);
 		}
+		else if (action == BLE_THERAPY_ACTION_START)
+		{
+			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
+#if (BLE_REMOTE_TREATMENT_CONTROL_ENABLE == 0U)
+			return BLE_RESULT_SAFETY_LOCK;
+#endif
+			if (s_ui.charger_connected != 0U) return BLE_RESULT_CHARGING_LOCK;
+			if (s_ble_sta.stable_connected == 0U) return BLE_RESULT_SAFETY_LOCK;
+			power = (s_ui.selected_channel == 0U) ?
+			        &s_ui.power_ch1 : &s_ui.power_ch2;
+			*power = 0U;
+			if (s_ui.selected_channel == 0U)
+			{
+				s_ble_remote_therapy_channels |= BLE_REMOTE_THERAPY_CH1;
+				TreatmentPulse_SetChannelZeroDac(TREATMENT_CHANNEL_1, 1U);
+			}
+			else
+			{
+				s_ble_remote_therapy_channels |= BLE_REMOTE_THERAPY_CH2;
+				TreatmentPulse_SetChannelZeroDac(TREATMENT_CHANNEL_2, 1U);
+			}
+			if ((s_ui.remaining_minutes == 0U) && (s_ui.remaining_seconds == 0U))
+			{
+				s_ui.remaining_minutes = s_ui.set_minutes;
+			}
+			s_ble_pending_remote_danger = 1U;
+			s_app.ui_dirty = 1U;
+			LOG_I("t=%u BLE therapy start ch=%u dac=0",
+			      s_system_tick_ms, (uint8_t)(s_ui.selected_channel + 1U));
+		}
 		else if (action == BLE_THERAPY_ACTION_SET_DURATION)
 		{
 			if (length != 1U) return BLE_RESULT_BAD_LENGTH;
@@ -4602,6 +4650,7 @@ static void BleProtocol_RemoteDangerTimeout(void)
 static void BleProtocol_UpdateRemoteDanger(void)
 {
 	uint8_t outputs_active = ((Pwr1 != 0U) || (Pwr2 != 0U) ||
+	                          (s_ble_remote_therapy_channels != 0U) ||
 	                          (s_ui.pressure_action != PRESSURE_ACTION_IDLE) ||
 	                          (s_pressure_process.state == PRESSURE_PROCESS_TESTING)) ?
 	                         1U : 0U;
@@ -4915,11 +4964,15 @@ static void AppEvent_Task10ms(void)
 
 static void Control_Task10ms(void)
 {
-	uint8_t pwr1_was_active;
-	uint8_t pwr2_was_active;
+	uint8_t pwm_ch1_was_enabled;
+	uint8_t pwm_ch2_was_enabled;
 	uint8_t output_allowed;
 	uint8_t requested_pwr1;
 	uint8_t requested_pwr2;
+	uint8_t remote_prestart_ch1;
+	uint8_t remote_prestart_ch2;
+	uint8_t pwm_ch1_requested;
+	uint8_t pwm_ch2_requested;
 	uint8_t active_channel_mask;
 
 	Ui_BuzzerTask10ms();
@@ -4927,49 +4980,61 @@ static void Control_Task10ms(void)
 	/* Feed the current UI level into the initial pulse/envelope implementation.
 	 * The countdown and state checks remain the common safety interlock. */
 	output_allowed = ((s_app.state == APP_STATE_THERAPY) &&
+	                  (s_ui.charger_connected == 0U) &&
 	                  ((s_ui.remaining_minutes != 0U) ||
 	                   (s_ui.remaining_seconds != 0U))) ? 1U : 0U;
 	requested_pwr1 = (output_allowed != 0U) ? s_ui.power_ch1 : 0U;
 	requested_pwr2 = (output_allowed != 0U) ? s_ui.power_ch2 : 0U;
-	pwr1_was_active = (Pwr1 != 0U) ? 1U : 0U;
-	pwr2_was_active = (Pwr2 != 0U) ? 1U : 0U;
-	if ((requested_pwr1 == 0U) && (requested_pwr2 == 0U) &&
-	    ((pwr1_was_active != 0U) || (pwr2_was_active != 0U)))
+	remote_prestart_ch1 = ((output_allowed != 0U) &&
+	                       ((s_ble_remote_therapy_channels & BLE_REMOTE_THERAPY_CH1) != 0U)) ? 1U : 0U;
+	remote_prestart_ch2 = ((output_allowed != 0U) &&
+	                       ((s_ble_remote_therapy_channels & BLE_REMOTE_THERAPY_CH2) != 0U)) ? 1U : 0U;
+	pwm_ch1_requested = ((requested_pwr1 != 0U) || (remote_prestart_ch1 != 0U)) ? 1U : 0U;
+	pwm_ch2_requested = ((requested_pwr2 != 0U) || (remote_prestart_ch2 != 0U)) ? 1U : 0U;
+	pwm_ch1_was_enabled = TreatmentPulse_IsChannelEnabled(TREATMENT_CHANNEL_1);
+	pwm_ch2_was_enabled = TreatmentPulse_IsChannelEnabled(TREATMENT_CHANNEL_2);
+	if ((pwm_ch1_requested == 0U) && (pwm_ch2_requested == 0U) &&
+	    ((pwm_ch1_was_enabled != 0U) || (pwm_ch2_was_enabled != 0U)))
 	{
 		/* 两通道均降为 0 仅暂停会话，但必须立即走统一硬件安全关断。 */
 		Treatment_StopOutputs();
 	}
 
-	if ((Pwr1 == 0U) && (requested_pwr1 != 0U))
+	if ((pwm_ch1_was_enabled == 0U) && (pwm_ch1_requested != 0U))
 	{
 		TreatmentPulse_PrepareChannel(TREATMENT_CHANNEL_1, s_ui.formula);
 	}
-	if ((Pwr2 == 0U) && (requested_pwr2 != 0U))
+	if ((pwm_ch2_was_enabled == 0U) && (pwm_ch2_requested != 0U))
 	{
 		TreatmentPulse_PrepareChannel(TREATMENT_CHANNEL_2, s_ui.formula);
 	}
 
 	Pwr1 = requested_pwr1;
 	Pwr2 = requested_pwr2;
-	if ((pwr1_was_active == 0U) && (Pwr1 != 0U))
+	TreatmentPulse_SetChannelZeroDac(TREATMENT_CHANNEL_1,
+	                                ((remote_prestart_ch1 != 0U) && (Pwr1 == 0U)) ? 1U : 0U);
+	TreatmentPulse_SetChannelZeroDac(TREATMENT_CHANNEL_2,
+	                                ((remote_prestart_ch2 != 0U) && (Pwr2 == 0U)) ? 1U : 0U);
+	if ((pwm_ch1_was_enabled == 0U) && (pwm_ch1_requested != 0U))
 	{
 		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 1U);
 	}
-	else if ((pwr1_was_active != 0U) && (Pwr1 == 0U))
+	else if ((pwm_ch1_was_enabled != 0U) && (pwm_ch1_requested == 0U))
 	{
 		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_1, 0U);
 	}
-	if ((pwr2_was_active == 0U) && (Pwr2 != 0U))
+	if ((pwm_ch2_was_enabled == 0U) && (pwm_ch2_requested != 0U))
 	{
 		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 1U);
 	}
-	else if ((pwr2_was_active != 0U) && (Pwr2 == 0U))
+	else if ((pwm_ch2_was_enabled != 0U) && (pwm_ch2_requested == 0U))
 	{
 		TreatmentPulse_SetChannelEnabled(TREATMENT_CHANNEL_2, 0U);
 	}
 
 	if ((s_therapy_session.active == 0U) &&
-	    ((Pwr1 != 0U) || (Pwr2 != 0U)))
+	    ((Pwr1 != 0U) || (Pwr2 != 0U) ||
+	     (s_ble_remote_therapy_channels != 0U)))
 	{
 		s_therapy_session.active = 1U;
 		s_therapy_session.output_active = 1U;
@@ -4984,7 +5049,9 @@ static void Control_Task10ms(void)
 	if (s_therapy_session.active != 0U)
 	{
 		active_channel_mask = ((Pwr1 != 0U) ? 0x01U : 0U) |
-		                      ((Pwr2 != 0U) ? 0x02U : 0U);
+		                      ((Pwr2 != 0U) ? 0x02U : 0U) |
+		                      ((remote_prestart_ch1 != 0U) ? 0x01U : 0U) |
+		                      ((remote_prestart_ch2 != 0U) ? 0x02U : 0U);
 		if (active_channel_mask != 0U)
 		{
 			s_therapy_session.channel_mask |= active_channel_mask;
