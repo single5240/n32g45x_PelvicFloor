@@ -302,6 +302,7 @@ typedef enum
 #define UI_MAX_POWER               60U
 #define UI_BEEP_ON_MS              60U
 #define UI_BEEP_GAP_MS             80U
+#define BLE_UI_BEEP_INTERVAL_MS    200UL
 #define PRESSURE_DEFLATE_TIME_MS    3000U
 #define PRESSURE_INFLATE_TIMEOUT_MS (PRESSURE_INFLATE_TIMEOUT_S * 1000UL)
 #define PRESSURE_TEST_DURATION_MS   (PRESSURE_TEST_DURATION_S * 1000UL)
@@ -576,6 +577,8 @@ static uint8_t s_ble_remote_therapy_channels;
 static uint8_t s_ble_protocol_link_active;
 static uint8_t s_ble_power_off_pending;
 static uint32_t s_ble_power_off_request_ms;
+static uint32_t s_ble_last_beep_ms;
+static uint8_t s_ble_beep_valid;
 static BleStaContext_t s_ble_sta;
 static TherapySessionContext_t s_therapy_session;
 static volatile BleCommCounters_t s_ble_comm_counters;
@@ -658,6 +661,7 @@ static uint8_t Ui_GetDisplayMinutes(void);
 static void Ui_CycleTreatmentTime(void);
 static void Ui_Countdown1s(void);
 static void Ui_Beep(uint8_t count);
+static void Ui_BeepRemote(uint8_t count);
 static void Ui_BuzzerTask10ms(void);
 
 static void Battery_InitModel(void);
@@ -3897,6 +3901,21 @@ static void Ui_Beep(uint8_t count)
 #endif
 }
 
+static void Ui_BeepRemote(uint8_t count)
+{
+	uint32_t now_ms = s_system_tick_ms;
+
+	if ((s_ble_beep_valid != 0U) &&
+	    ((uint32_t)(now_ms - s_ble_last_beep_ms) < BLE_UI_BEEP_INTERVAL_MS))
+	{
+		return;
+	}
+
+	s_ble_last_beep_ms = now_ms;
+	s_ble_beep_valid = 1U;
+	Ui_Beep(count);
+}
+
 static void Ui_BuzzerTask10ms(void)
 {
 #if (BUZZER_OUTPUT_ENABLE == 0U)
@@ -4332,7 +4351,7 @@ static void BleProtocol_TxTask(void)
 
 static void BleProtocol_StopAll(void)
 {
-	Ui_Beep(1U);
+	Ui_BeepRemote(1U);
 	Treatment_StopOutputs();
 	Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 	Pressure_StopOutputs();
@@ -4466,7 +4485,7 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 		else if (action == BLE_THERAPY_ACTION_SWITCH_PRESSURE)
 		{
 			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
-			Ui_Beep(1U);
+			Ui_BeepRemote(1U);
 			App_RequestState(APP_STATE_PRESSURE);
 			App_ApplyStateTransition();
 			return BLE_RESULT_OK;
@@ -4553,7 +4572,7 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 		else if (action == BLE_PRESSURE_ACTION_SWITCH_THERAPY)
 		{
 			if (length != 0U) return BLE_RESULT_BAD_LENGTH;
-			Ui_Beep(1U);
+			Ui_BeepRemote(1U);
 			App_RequestState(APP_STATE_THERAPY);
 			App_ApplyStateTransition();
 			return BLE_RESULT_OK;
@@ -4564,7 +4583,7 @@ static BleProtocolResult_t BleProtocol_ModeControl(uint8_t mode, uint8_t action,
 		}
 	}
 
-	Ui_Beep(1U);
+	Ui_BeepRemote(1U);
 	return BLE_RESULT_OK;
 }
 
@@ -4576,7 +4595,7 @@ static BleProtocolResult_t BleProtocol_LocalKeyLock(uint8_t locked)
 	}
 	s_local_key_locked = (locked != 0U) ? 1U : 0U;
 	s_app.ui_dirty = 1U;
-	Ui_Beep(1U);
+	Ui_BeepRemote(1U);
 	return BLE_RESULT_OK;
 }
 
@@ -4595,7 +4614,7 @@ static BleProtocolResult_t BleProtocol_PowerOff(void)
 		return BLE_RESULT_BUSY;
 	}
 
-	Ui_Beep(1U);
+	Ui_BeepRemote(1U);
 	Treatment_StopOutputs();
 	Treatment_CompleteSession(THERAPY_END_BY_ACTIVE_STOP);
 	if (s_pressure_process.state == PRESSURE_PROCESS_TESTING)
