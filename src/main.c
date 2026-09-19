@@ -145,7 +145,9 @@ typedef enum
 	APP_STATE_THERAPY,       /* 治疗模式 */
 	APP_STATE_PRESSURE,      /* 压力检测/充放气模式 */
 	APP_STATE_CHARGING,      /* 关机充电动画; 可以一边充电一边工作 */
-	APP_STATE_FAULT          /* 故障模式：立即关闭所有危险输出 */
+	APP_STATE_FAULT,         /* 故障模式：立即关闭所有危险输出 */
+	APP_STATE_BATTERY_CHECK, /* 开机前电量检查，危险输出保持关闭 */
+	APP_STATE_LOW_BATTERY    /* 低电提示完成后进入关机低功耗 */
 } AppState_t;
 
 typedef enum
@@ -278,6 +280,19 @@ typedef enum
 	PRESSURE_ACTION_INFLATING,
 	PRESSURE_ACTION_DEFLATING
 } PressureAction_t;
+
+typedef enum
+{
+	LOW_BATTERY_WARNING_NONE = 0,
+	LOW_BATTERY_WARNING_AUTO_SHUTDOWN,
+	LOW_BATTERY_WARNING_BOOT_DENIED
+} LowBatteryWarning_t;
+
+typedef enum
+{
+	LOW_BATTERY_PHASE_FLASH = 0,
+	LOW_BATTERY_PHASE_BEEP
+} LowBatteryPhase_t;
 
 typedef enum
 {
@@ -589,6 +604,13 @@ static uint8_t s_stop0_option_ready;
 static uint8_t s_stop0_option_warning_logged;
 static uint32_t s_power_off_since_ms;
 static volatile uint8_t s_low_power_wake_sources;
+static uint8_t s_low_battery_below_threshold;
+static uint32_t s_low_battery_below_since_ms;
+static uint32_t s_battery_boot_check_since_ms;
+static LowBatteryWarning_t s_low_battery_warning;
+static LowBatteryPhase_t s_low_battery_phase;
+static uint8_t s_low_battery_flash_step;
+static uint32_t s_low_battery_flash_since_ms;
 #if (APP_DIAGNOSTICS_ENABLE != 0U)
 static AppDiagSnapshot_t s_diag_previous;
 static uint8_t s_diag_tick_divider;
@@ -654,6 +676,7 @@ static void Ui_Render(void);
 static void Ui_RenderTherapy(void);
 static void Ui_RenderPressure(void);
 static void Ui_RenderCharging(void);
+static void Ui_RenderLowBattery(void);
 static void Ui_ClearDisplay(void);
 static uint8_t Ui_GetBatterySegments(uint8_t level);
 static uint8_t Ui_GetBatteryDisplayLevel(void);
@@ -678,6 +701,10 @@ static void Battery_UpdateLowState(uint16_t voltage_mv);
 static void Battery_ProcessMeasurement(uint16_t battery_adc,
                                        uint16_t reference_adc);
 static uint8_t Battery_Task100ms(void);
+static void BatterySafety_ResetLowTimer(void);
+static void BatterySafety_Task10ms(void);
+static void LowBattery_Task50ms(void);
+static void LowBattery_StartWarning(LowBatteryWarning_t warning);
 static uint16_t Pressure_CalculateMmHg(uint16_t adc_value,
                                        uint16_t *adc_input_mv,
                                        uint16_t *sensor_output_uv);
@@ -2022,6 +2049,12 @@ static void App_Init(void)
 	Ui_InitModel();
 	Treatment_CancelSession();
 	Battery_InitModel();
+	BatterySafety_ResetLowTimer();
+	s_battery_boot_check_since_ms = 0U;
+	s_low_battery_warning = LOW_BATTERY_WARNING_NONE;
+	s_low_battery_phase = LOW_BATTERY_PHASE_FLASH;
+	s_low_battery_flash_step = 0U;
+	s_low_battery_flash_since_ms = 0U;
 	Key_Init();
 	ble_callbacks.stop_all = BleProtocol_StopAll;
 	ble_callbacks.mode_control = BleProtocol_ModeControl;
@@ -2120,6 +2153,8 @@ static const char *App_StateName(AppState_t state)
 		case APP_STATE_PRESSURE:  return "PRESSURE";
 		case APP_STATE_CHARGING:  return "CHARGING";
 		case APP_STATE_FAULT:     return "FAULT";
+		case APP_STATE_BATTERY_CHECK: return "BATTERY_CHECK";
+		case APP_STATE_LOW_BATTERY:   return "LOW_BATTERY";
 		default:                  return "UNKNOWN";
 	}
 }
@@ -2191,6 +2226,8 @@ static void App_StateEnter(AppState_t state)
 	{
 		case APP_STATE_POWER_OFF:
 			Board_EnterSafeState();
+			BatterySafety_ResetLowTimer();
+			s_low_battery_warning = LOW_BATTERY_WARNING_NONE;
 			s_ui.power_ch1 = 0U;
 			s_ui.power_ch2 = 0U;
 			s_ui.pressure_action = PRESSURE_ACTION_IDLE;
@@ -2199,6 +2236,8 @@ static void App_StateEnter(AppState_t state)
 
 		case APP_STATE_CHARGING:
 			Board_EnterSafeState();
+			BatterySafety_ResetLowTimer();
+			s_low_battery_warning = LOW_BATTERY_WARNING_NONE;
 			Battery_StartSession();
 			Ui_InitHardware();
 			s_ui.beep_remaining = 0U;
@@ -2237,6 +2276,29 @@ static void App_StateEnter(AppState_t state)
 			Ui_RecordActivity();
 			Ui_Beep(3U);
 			App_RequestState(APP_STATE_THERAPY);
+			break;
+
+		case APP_STATE_BATTERY_CHECK:
+			Board_EnterSafeState();
+			BatterySafety_ResetLowTimer();
+			Battery_StartSession();
+			s_battery_boot_check_since_ms = s_system_tick_ms;
+			break;
+
+		case APP_STATE_LOW_BATTERY:
+			Board_EnterSafeState();
+			BatterySafety_ResetLowTimer();
+			Ui_InitHardware();
+			s_ui.beep_remaining = 0U;
+			s_ui.beep_on_ms = 0U;
+			s_ui.beep_gap_ms = 0U;
+#if (BUZZER_OUTPUT_ENABLE != 0U)
+			TIM_EnableCapCmpCh(TIM3, TIM_CH_4, TIM_CAP_CMP_DISABLE);
+#endif
+			s_low_battery_phase = LOW_BATTERY_PHASE_FLASH;
+			s_low_battery_flash_step = 0U;
+			s_low_battery_flash_since_ms = s_system_tick_ms;
+			s_app.ui_dirty = 1U;
 			break;
 
 		case APP_STATE_READY:
@@ -2565,7 +2627,9 @@ static void App_HandleEvent(AppEvent_t event)
 		}
 		/* Charger presence is parallel to normal operation. Only enter the
 		 * charging-only display when the product is currently powered off. */
-		if (s_app.state == APP_STATE_POWER_OFF)
+		if ((s_app.state == APP_STATE_POWER_OFF) ||
+		    (s_app.state == APP_STATE_BATTERY_CHECK) ||
+		    (s_app.state == APP_STATE_LOW_BATTERY))
 		{
 			App_RequestState(APP_STATE_CHARGING);
 		}
@@ -2587,7 +2651,7 @@ static void App_HandleEvent(AppEvent_t event)
 	{
 		if (event == APP_EVENT_POWER_LONG)
 		{
-			App_RequestState(APP_STATE_BOOTING);
+			App_RequestState(APP_STATE_BATTERY_CHECK);
 		}
 		return;
 	}
@@ -2602,6 +2666,8 @@ static void App_HandleEvent(AppEvent_t event)
 	}
 
 	if ((s_app.state == APP_STATE_BOOTING) ||
+	    (s_app.state == APP_STATE_BATTERY_CHECK) ||
+	    (s_app.state == APP_STATE_LOW_BATTERY) ||
 	    (s_app.state == APP_STATE_FAULT))
 	{
 		return;
@@ -3016,6 +3082,25 @@ static void Ui_RenderCharging(void)
 	write_LCD(1U, 20U, Ui_GetBatterySegments(level));
 }
 
+static void Ui_RenderLowBattery(void)
+{
+	Ui_ClearDisplay();
+	if ((s_low_battery_phase != LOW_BATTERY_PHASE_FLASH) ||
+	    ((s_low_battery_flash_step & 1U) != 0U))
+	{
+		return;
+	}
+
+	if (s_low_battery_warning == LOW_BATTERY_WARNING_AUTO_SHUTDOWN)
+	{
+		Allon_LCD();
+	}
+	else
+	{
+		write_LCD(1U, 20U, Ui_GetBatterySegments(0U));
+	}
+}
+
 static void Ui_Render(void)
 {
 	if (s_ui.lcd_initialized == 0U)
@@ -3035,6 +3120,10 @@ static void Ui_Render(void)
 
 		case APP_STATE_CHARGING:
 			Ui_RenderCharging();
+			break;
+
+		case APP_STATE_LOW_BATTERY:
+			Ui_RenderLowBattery();
 			break;
 
 		case APP_STATE_FAULT:
@@ -3476,6 +3565,7 @@ static uint8_t Battery_Task100ms(void)
 	uint16_t reference_adc;
 	uint8_t pressure_mode = (s_app.state == APP_STATE_PRESSURE) ? 1U : 0U;
 	uint8_t working_state = ((s_app.state == APP_STATE_CHARGING) ||
+	                         (s_app.state == APP_STATE_BATTERY_CHECK) ||
 	                         (s_app.state == APP_STATE_READY) ||
 	                         (s_app.state == APP_STATE_THERAPY) ||
 	                         (s_app.state == APP_STATE_PRESSURE)) ? 1U : 0U;
@@ -3564,6 +3654,154 @@ static uint8_t Battery_Task100ms(void)
 	/* BATEN 已持续有效，下一次 100 ms 任务读取稳定后的分压。 */
 	s_battery.measurement_pending = 1U;
 	return 0U;
+}
+
+static void BatterySafety_ResetLowTimer(void)
+{
+	s_low_battery_below_threshold = 0U;
+	s_low_battery_below_since_ms = 0U;
+}
+
+static void LowBattery_StartWarning(LowBatteryWarning_t warning)
+{
+	if ((warning == LOW_BATTERY_WARNING_NONE) ||
+	    (s_app.state == APP_STATE_LOW_BATTERY))
+	{
+		return;
+	}
+
+	/* Do not wait for the next state-transition point before removing
+	 * hazardous outputs after an automatic low-battery shutdown request. */
+	if (warning == LOW_BATTERY_WARNING_AUTO_SHUTDOWN)
+	{
+		Board_EnterSafeState();
+	}
+
+	s_low_battery_warning = warning;
+	LOG_W("t=%u low battery warning=%s percent=%u mv=%u",
+	      s_system_tick_ms,
+	      (warning == LOW_BATTERY_WARNING_BOOT_DENIED) ?
+	      "BOOT_DENIED" : "AUTO_SHUTDOWN",
+	      Battery_CalculatePercent(s_battery.voltage_mv),
+	      s_battery.voltage_mv);
+	App_RequestState(APP_STATE_LOW_BATTERY);
+}
+
+static void BatterySafety_Task10ms(void)
+{
+	uint8_t operating_state = ((s_app.state == APP_STATE_READY) ||
+	                           (s_app.state == APP_STATE_THERAPY) ||
+	                           (s_app.state == APP_STATE_PRESSURE)) ? 1U : 0U;
+	uint8_t current_percent;
+
+	if (s_app.state == APP_STATE_BATTERY_CHECK)
+	{
+		if (s_ui.charger_connected != 0U)
+		{
+			App_RequestState(APP_STATE_CHARGING);
+			return;
+		}
+
+		if (s_battery.valid != 0U)
+		{
+			current_percent = Battery_CalculatePercent(s_battery.voltage_mv);
+			if (current_percent < APP_LOW_BATTERY_SHUTDOWN_PERCENT)
+			{
+				LowBattery_StartWarning(LOW_BATTERY_WARNING_BOOT_DENIED);
+			}
+			else
+			{
+				LOG_I("t=%u battery boot check passed, percent=%u mv=%u",
+				      s_system_tick_ms, current_percent, s_battery.voltage_mv);
+				App_RequestState(APP_STATE_BOOTING);
+			}
+			return;
+		}
+
+		if ((uint32_t)(s_system_tick_ms - s_battery_boot_check_since_ms) >=
+		    APP_BATTERY_BOOT_CHECK_TIMEOUT_MS)
+		{
+			LOG_E("t=%u battery boot check timeout", s_system_tick_ms);
+			LowBattery_StartWarning(LOW_BATTERY_WARNING_BOOT_DENIED);
+		}
+		return;
+	}
+
+	if ((operating_state == 0U) || (s_ui.charger_connected != 0U) ||
+	    (s_battery.valid == 0U))
+	{
+		BatterySafety_ResetLowTimer();
+		return;
+	}
+
+	current_percent = Battery_CalculatePercent(s_battery.voltage_mv);
+	if (current_percent >= APP_LOW_BATTERY_SHUTDOWN_PERCENT)
+	{
+		BatterySafety_ResetLowTimer();
+		return;
+	}
+
+	if (s_low_battery_below_threshold == 0U)
+	{
+		s_low_battery_below_threshold = 1U;
+		s_low_battery_below_since_ms = s_system_tick_ms;
+		LOG_W("t=%u battery below shutdown threshold, percent=%u mv=%u",
+		      s_system_tick_ms, current_percent, s_battery.voltage_mv);
+		return;
+	}
+
+	if ((uint32_t)(s_system_tick_ms - s_low_battery_below_since_ms) >=
+	    APP_LOW_BATTERY_CONFIRM_MS)
+	{
+		LowBattery_StartWarning(LOW_BATTERY_WARNING_AUTO_SHUTDOWN);
+	}
+}
+
+static void LowBattery_Task50ms(void)
+{
+	if (s_app.state != APP_STATE_LOW_BATTERY)
+	{
+		return;
+	}
+
+	if (s_low_battery_phase == LOW_BATTERY_PHASE_FLASH)
+	{
+		if ((uint32_t)(s_system_tick_ms - s_low_battery_flash_since_ms) <
+		    APP_LOW_BATTERY_FLASH_HALF_PERIOD_MS)
+		{
+			return;
+		}
+
+		s_low_battery_flash_since_ms += APP_LOW_BATTERY_FLASH_HALF_PERIOD_MS;
+		s_low_battery_flash_step++;
+		s_app.ui_dirty = 1U;
+		if (s_low_battery_flash_step <
+		    (uint8_t)(APP_LOW_BATTERY_FLASH_COUNT * 2U))
+		{
+			return;
+		}
+
+		if (s_low_battery_warning == LOW_BATTERY_WARNING_AUTO_SHUTDOWN)
+		{
+			s_low_battery_phase = LOW_BATTERY_PHASE_BEEP;
+			Ui_Beep(3U);
+		}
+		else
+		{
+			s_power_off_since_ms = s_system_tick_ms - APP_STOP0_ENTRY_DELAY_MS;
+			App_RequestState(APP_STATE_POWER_OFF);
+		}
+		return;
+	}
+
+	if ((s_ui.beep_remaining == 0U) && (s_ui.beep_on_ms == 0U) &&
+	    (s_ui.beep_gap_ms == 0U))
+	{
+		LOG_I("t=%u low battery warning complete, power off",
+		      s_system_tick_ms);
+		s_power_off_since_ms = s_system_tick_ms - APP_STOP0_ENTRY_DELAY_MS;
+		App_RequestState(APP_STATE_POWER_OFF);
+	}
 }
 
 /*
@@ -4995,6 +5233,7 @@ static void Control_Task10ms(void)
 	uint8_t active_channel_mask;
 
 	Ui_BuzzerTask10ms();
+	BatterySafety_Task10ms();
 
 	/* Feed the current UI level into the initial pulse/envelope implementation.
 	 * The countdown and state checks remain the common safety interlock. */
@@ -5119,6 +5358,7 @@ static void Control_Task10ms(void)
 static void Ui_Task50ms(void)
 {
 	PressureAdc_Task50ms();
+	LowBattery_Task50ms();
 	if ((s_app.state == APP_STATE_THERAPY) ||
 	    (s_app.state == APP_STATE_PRESSURE))
 	{
@@ -5168,7 +5408,6 @@ static void Power_Task1000ms(void)
 		BleProtocol_NotifyStatus(s_system_tick_ms);
 	}
 
-	/* TODO：低电量和自动关机在对应模块完成后接入 */
 }
 
 int main(void)

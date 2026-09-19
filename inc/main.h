@@ -258,6 +258,12 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 #define APP_STOP2_ENABLE                      0U
 /* Keep cooperative tasks alive long enough for the shutdown beeps to finish. */
 #define APP_POWER_OFF_BEEP_DELAY_MS            2000UL
+/* Low-battery shutdown and power-on inhibition. */
+#define APP_LOW_BATTERY_SHUTDOWN_PERCENT       10U
+#define APP_LOW_BATTERY_CONFIRM_MS              10000UL
+#define APP_LOW_BATTERY_FLASH_HALF_PERIOD_MS    500UL
+#define APP_LOW_BATTERY_FLASH_COUNT             3U
+#define APP_BATTERY_BOOT_CHECK_TIMEOUT_MS       3000UL
 /* Diagnostic gate: keep the buzzer timer and PB1 output disabled when 0. */
 #define BUZZER_OUTPUT_ENABLE                  1U
 /* ARM Cortex-M4 r0p0/r0p1 erratum 838869: disable the default write buffer. */
@@ -292,6 +298,18 @@ void App_DiagnosticsRecordFaultContextISR(uint16_t fault_type,
 
 #if (APP_POWER_OFF_BEEP_DELAY_MS < 500UL)
 #error "APP_POWER_OFF_BEEP_DELAY_MS must leave time for the shutdown beeps"
+#endif
+
+#if (APP_LOW_BATTERY_SHUTDOWN_PERCENT == 0U) || \
+    (APP_LOW_BATTERY_SHUTDOWN_PERCENT > 100U)
+#error "APP_LOW_BATTERY_SHUTDOWN_PERCENT must be within 1..100"
+#endif
+
+#if (APP_LOW_BATTERY_CONFIRM_MS == 0UL) || \
+    (APP_LOW_BATTERY_FLASH_HALF_PERIOD_MS == 0UL) || \
+    (APP_LOW_BATTERY_FLASH_COUNT == 0U) || \
+    (APP_BATTERY_BOOT_CHECK_TIMEOUT_MS < 500UL)
+#error "Low-battery timing constants are invalid"
 #endif
 
 #if (APP_DIAGNOSTICS_ENABLE > 1U)
