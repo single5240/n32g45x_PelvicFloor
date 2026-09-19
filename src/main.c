@@ -2614,6 +2614,18 @@ static void App_HandleEvent(AppEvent_t event)
 {
 	APP_DIAG_RECORD_EVENT(event);
 
+	/* A key event may have entered the queue in the same 10 ms cycle in which
+	 * the BLE lock command was received. Recheck here so lock application is
+	 * not dependent on the input/communication task ordering. The documented
+	 * long-press power-off escape remains available. */
+	if ((s_local_key_locked != 0U) &&
+	    (event >= APP_EVENT_POWER_SHORT) &&
+	    (event <= APP_EVENT_MINUS_SHORT) &&
+	    (event != APP_EVENT_POWER_LONG))
+	{
+		return;
+	}
+
 	/* Charger events update power presence without interrupting active work. */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
 	{
@@ -4886,10 +4898,6 @@ static void BleProtocol_ProcessPendingPowerOff(void)
 static void BleProtocol_LinkState(uint8_t connected)
 {
 	s_ble_protocol_link_active = (connected != 0U) ? 1U : 0U;
-	if (connected == 0U)
-	{
-		s_local_key_locked = 0U;
-	}
 }
 
 static void BleProtocol_RemoteDangerTimeout(void)
@@ -5066,6 +5074,13 @@ static void BleSta_Task10ms(void)
 		else
 		{
 			s_ble_comm_counters.sta_disconnects++;
+			/* The local-key lock is released only after the debounced physical
+			 * BLE disconnect. A protocol idle timeout must not unlock the keys. */
+			if (s_local_key_locked != 0U)
+			{
+				s_local_key_locked = 0U;
+				s_app.ui_dirty = 1U;
+			}
 			USART_ConfigInt(USART2, USART_INT_TXDE, DISABLE);
 			BleProtocol_Reset();
 		}
