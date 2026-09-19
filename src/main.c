@@ -369,12 +369,15 @@ typedef enum
 #define BATTERY_ADC_RETRY_TICKS           10U
 #define BATTERY_VALID_MIN_MV              2500U
 #define BATTERY_VALID_MAX_MV              5000U
-#define BATTERY_FULL_MV                   4200U
 #define BATTERY_LEVEL_3_MV                4100U
 #define BATTERY_LEVEL_2_MV                3900U
 #define BATTERY_LEVEL_1_MV                3700U
 #define BATTERY_LOW_ENTER_MV              3500U
 #define BATTERY_LOW_EXIT_MV               3600U
+#define BATTERY_PERCENT_FULL_MV           4200U
+#define BATTERY_SHUTDOWN_THRESHOLD_MV     \
+	(BATTERY_LOW_ENTER_MV + (((BATTERY_PERCENT_FULL_MV - BATTERY_LOW_ENTER_MV) * \
+	APP_LOW_BATTERY_SHUTDOWN_PERCENT) / 100U))
 #define BATTERY_LOW_CONFIRM_COUNT         3U
 #define BATTERY_PERCENT_DEADBAND          2U
 #define BATTERY_PERCENT_CONFIRM_COUNT     3U
@@ -3373,7 +3376,10 @@ static uint8_t Battery_CalculateLevel(uint16_t voltage_mv)
 	return 0U;
 }
 
-/* 沿用旧程序的 3.5�?4.2 V 线性百分比，仅供通信/调试使用�? */
+/*
+ * BLE 百分比以 LCD 格数阈值为锚点，在每一格电压范围内线性插值：
+ * 3.50 V / 3.70 V / 3.90 V / 4.10 V 分别对应 0% / 33% / 66% / 100%。
+ */
 static uint8_t Battery_CalculatePercent(uint16_t voltage_mv)
 {
 	uint32_t percent;
@@ -3382,22 +3388,38 @@ static uint8_t Battery_CalculatePercent(uint16_t voltage_mv)
 	{
 		return 0U;
 	}
-	if (voltage_mv >= BATTERY_FULL_MV)
+	if (voltage_mv < BATTERY_LEVEL_1_MV)
 	{
-		return 100U;
+		percent = ((uint32_t)(voltage_mv - BATTERY_LOW_ENTER_MV) * 33U +
+		           ((BATTERY_LEVEL_1_MV - BATTERY_LOW_ENTER_MV) / 2U)) /
+		          (BATTERY_LEVEL_1_MV - BATTERY_LOW_ENTER_MV);
+		return (uint8_t)percent;
+	}
+	if (voltage_mv < BATTERY_LEVEL_2_MV)
+	{
+		percent = 33U +
+		          (((uint32_t)(voltage_mv - BATTERY_LEVEL_1_MV) * 33U +
+		            ((BATTERY_LEVEL_2_MV - BATTERY_LEVEL_1_MV) / 2U)) /
+		           (BATTERY_LEVEL_2_MV - BATTERY_LEVEL_1_MV));
+		return (uint8_t)percent;
+	}
+	if (voltage_mv < BATTERY_LEVEL_3_MV)
+	{
+		percent = 66U +
+		          (((uint32_t)(voltage_mv - BATTERY_LEVEL_2_MV) * 34U +
+		            ((BATTERY_LEVEL_3_MV - BATTERY_LEVEL_2_MV) / 2U)) /
+		           (BATTERY_LEVEL_3_MV - BATTERY_LEVEL_2_MV));
+		return (uint8_t)percent;
 	}
 
-	percent = ((uint32_t)(voltage_mv - BATTERY_LOW_ENTER_MV) * 100U + 350U) /
-	          (BATTERY_FULL_MV - BATTERY_LOW_ENTER_MV);
-	return (uint8_t)percent;
+	return 100U;
 }
 
 static void Battery_UpdatePercent(uint8_t calculated_percent)
 {
 	uint8_t difference;
 
-	/* Prevent load recovery and charger ripple from reversing the displayed
-	 * direction. The real filtered voltage still feeds the low-battery guard. */
+	/* Prevent load recovery and charger ripple from reversing the BLE value. */
 	if (((s_ui.charger_connected == 0U) &&
 	     (calculated_percent > s_battery.percent)) ||
 	    ((s_ui.charger_connected != 0U) &&
@@ -3420,7 +3442,6 @@ static void Battery_UpdatePercent(uint8_t calculated_percent)
 	             (uint8_t)(s_battery.percent - calculated_percent);
 	if (difference < BATTERY_PERCENT_DEADBAND)
 	{
-		/* Ignore one-percent fluctuations in the BLE display value. */
 		s_battery.percent_candidate = calculated_percent;
 		s_battery.percent_confirm_count = 0U;
 		return;
@@ -3704,7 +3725,6 @@ static void BatterySafety_Task10ms(void)
 	uint8_t operating_state = ((s_app.state == APP_STATE_READY) ||
 	                           (s_app.state == APP_STATE_THERAPY) ||
 	                           (s_app.state == APP_STATE_PRESSURE)) ? 1U : 0U;
-	uint8_t current_percent;
 
 	if (s_app.state == APP_STATE_BATTERY_CHECK)
 	{
@@ -3716,15 +3736,14 @@ static void BatterySafety_Task10ms(void)
 
 		if (s_battery.valid != 0U)
 		{
-			current_percent = Battery_CalculatePercent(s_battery.voltage_mv);
-			if (current_percent < APP_LOW_BATTERY_SHUTDOWN_PERCENT)
+			if (s_battery.voltage_mv < BATTERY_SHUTDOWN_THRESHOLD_MV)
 			{
 				LowBattery_StartWarning(LOW_BATTERY_WARNING_BOOT_DENIED);
 			}
 			else
 			{
 				LOG_I("t=%u battery boot check passed, percent=%u mv=%u",
-				      s_system_tick_ms, current_percent, s_battery.voltage_mv);
+				      s_system_tick_ms, s_battery.percent, s_battery.voltage_mv);
 				App_RequestState(APP_STATE_BOOTING);
 			}
 			return;
@@ -3746,8 +3765,7 @@ static void BatterySafety_Task10ms(void)
 		return;
 	}
 
-	current_percent = Battery_CalculatePercent(s_battery.voltage_mv);
-	if (current_percent >= APP_LOW_BATTERY_SHUTDOWN_PERCENT)
+	if (s_battery.voltage_mv >= BATTERY_SHUTDOWN_THRESHOLD_MV)
 	{
 		BatterySafety_ResetLowTimer();
 		return;
@@ -3758,7 +3776,7 @@ static void BatterySafety_Task10ms(void)
 		s_low_battery_below_threshold = 1U;
 		s_low_battery_below_since_ms = s_system_tick_ms;
 		LOG_W("t=%u battery below shutdown threshold, percent=%u mv=%u",
-		      s_system_tick_ms, current_percent, s_battery.voltage_mv);
+		      s_system_tick_ms, s_battery.percent, s_battery.voltage_mv);
 		return;
 	}
 
