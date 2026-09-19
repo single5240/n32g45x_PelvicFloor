@@ -144,7 +144,7 @@ typedef enum
 	APP_STATE_READY,         /* 已开机但尚未输出 */
 	APP_STATE_THERAPY,       /* 治疗模式 */
 	APP_STATE_PRESSURE,      /* 压力检测/充放气模式 */
-	APP_STATE_CHARGING,      /* 关机充电动画; 可以一边充电一边工作 */
+	APP_STATE_CHARGING,      /* 关机充电动画，充电期间禁止开机 */
 	APP_STATE_FAULT,         /* 故障模式：立即关闭所有危险输出 */
 	APP_STATE_BATTERY_CHECK, /* 开机前电量检查，危险输出保持关闭 */
 	APP_STATE_LOW_BATTERY    /* 低电提示完成后进入关机低功耗 */
@@ -2264,8 +2264,8 @@ static void App_StateEnter(AppState_t state)
 			 * 当前阶段只启动UI。ADC、治疗和气泵外设继续保持关闭
 			 * 等相应模块完成后再逐项加入这里
 			 */
-			/* POWER_OFF and CHARGING are already safe source states. Keep BLEN
-			 * stable here so charge-to-work startup does not pulse the backlight off. */
+			/* BOOTING is reachable only from POWER_OFF. Keep BLEN stable while
+			 * the normal power-on path rebuilds the working peripherals. */
 			/* 从 STOP0 唤醒开机时恢复两路 DAC 与 TIM6 触发；冷启动重复调用幂等。 */
 			Treatment_DacReprepareForOperation();
 			Ui_InitModel();
@@ -2442,8 +2442,7 @@ static void Key_Update(KeyId_t key_id)
 
 	if (key_id == KEY_ID_POWER)
 	{
-		if ((s_app.state == APP_STATE_POWER_OFF) ||
-		    (s_app.state == APP_STATE_CHARGING))
+		if (s_app.state == APP_STATE_POWER_OFF)
 		{
 			long_threshold_ms = POWER_ON_HOLD_MS;
 		}
@@ -2629,7 +2628,8 @@ static void App_HandleEvent(AppEvent_t event)
 		return;
 	}
 
-	/* Charger events update power presence without interrupting active work. */
+	/* Charger insertion always ends powered operation and enters the dedicated
+	 * charging display. Charging remains a power-off state and cannot boot. */
 	if (event == APP_EVENT_CHARGER_CONNECTED)
 	{
 		/* Charging is a global hazardous-output interlock, regardless of
@@ -2640,14 +2640,7 @@ static void App_HandleEvent(AppEvent_t event)
 		{
 			Pressure_StopOutputs();
 		}
-		/* Charger presence is parallel to normal operation. Only enter the
-		 * charging-only display when the product is currently powered off. */
-		if ((s_app.state == APP_STATE_POWER_OFF) ||
-		    (s_app.state == APP_STATE_BATTERY_CHECK) ||
-		    (s_app.state == APP_STATE_LOW_BATTERY))
-		{
-			App_RequestState(APP_STATE_CHARGING);
-		}
+		App_RequestState(APP_STATE_CHARGING);
 		s_app.ui_dirty = 1U;
 		return;
 	}
@@ -2656,6 +2649,9 @@ static void App_HandleEvent(AppEvent_t event)
 	{
 		if (s_app.state == APP_STATE_CHARGING)
 		{
+			/* No shutdown beep is pending in charging mode. Make the POWER_OFF
+			 * path reset/enter STOP0 immediately while the display stays off. */
+			s_power_off_since_ms = s_system_tick_ms - APP_STOP0_ENTRY_DELAY_MS;
 			App_RequestState(APP_STATE_POWER_OFF);
 		}
 		s_app.ui_dirty = 1U;
@@ -2673,10 +2669,7 @@ static void App_HandleEvent(AppEvent_t event)
 
 	if (s_app.state == APP_STATE_CHARGING)
 	{
-		if (event == APP_EVENT_POWER_LONG)
-		{
-			App_RequestState(APP_STATE_BOOTING);
-		}
+		/* All keys are ignored while external charging power is present. */
 		return;
 	}
 
