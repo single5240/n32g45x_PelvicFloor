@@ -46,7 +46,7 @@ Keil 工程元数据中的 `CLOCK(12000000)` 仅供 IDE 使用；实际运行时
 
 系统没有 RTOS。`SysTick_Handler()` 每 1 ms 只递增时基；主循环执行 `App_RunOnce()`，只有完整执行一次 10 ms 输入、通讯、事件、状态切换和控制链后才喂独立看门狗。普通空闲处固定使用 `Delay1ms(1U)` 硬延时，不恢复普通 `__WFI()`；该延时会增加 STOP0 前等待阶段的电流。软件启动型 IWDG 在 `POWER_OFF` 阶段保持未启动，进入充电或工作状态前才启动；其余配置仍为 40 kHz LSI、32 分频和重装值 2499，标称超时约 2 s。启动日志会输出 IWDG、BOR、POR、外部复位和低功耗复位标志，用于区分软件未喂狗与疑似供电复位。
 
-无充电器时每次物理上电默认进入 `POWER_OFF`，保留 10 s 下载和恢复窗口，期间电源键或 PB10/PB11 充电状态边沿会重新开始计时。窗口结束后通过 PB15/EXTI15、PB10/EXTI10、PB11/EXTI11 唤醒的 STOP0 降低功耗；唤醒后先恢复 HSI-PLL 产生的 128 MHz 时钟，再重建 GPIO、TIM1/TIM8、TIM4 和 USART2，最后恢复 1 ms SysTick 与其他 NVIC 中断。正常工作后 IWDG 已无法停止，因此再次关机时先立即关闭危险输出，继续运行蜂鸣器任务 2 s，再用 BKP DAT42 标记并受控复位；该标记仅在软件复位原因同时成立时有效，复位后不重复等待 10 s，直接进入 STOP0。STOP0 要求选项字节为软件 IWDG 且 `nRST_STOP=1`，条件不满足时仅记录错误并保持普通关机等待，不在运行时改写选项字节。进入 STOP0 前会关闭并复位 USART2、ADC1/ADC2、DAC、TIM1/TIM3/TIM4/TIM6/TIM8 及其非必要时钟，通过 SYS DIS 关闭 TM1621B，拉低 BATEN、拉高 BLEEN，保持治疗桥、蜂鸣器、气泵、阀门和背光的安全电平；PB4/PB5、PB7 及非唤醒按键切换为模拟输入，PB10/PB11/PB15、GPIOB/AFIO、PWR/BKP 和 SWD 保留用于唤醒与恢复。开机路径通过 `Treatment_DacReprepareForOperation()` 重建两路 DAC 与 TIM6。低功耗睡眠模式由 `APP_STOP2_ENABLE` 选择：0 为 STOP0（默认、已验证），1 为 STOP2（更深睡眠，唤醒/充电路径需先做台架验证再确定为量产默认）。
+无充电器时每次物理上电默认进入 `POWER_OFF`，保留 10 s 下载和恢复窗口，期间电源键或 PB10/PB11 充电状态边沿会重新开始计时。窗口结束后通过 PB15/EXTI15、PB10/EXTI10、PB11/EXTI11 唤醒的 STOP0 降低功耗；唤醒后先恢复 HSI-PLL 产生的 128 MHz 时钟，再重建 GPIO、TIM1/TIM8、TIM4 和 USART2，最后恢复 1 ms SysTick 与其他 NVIC 中断；时钟恢复失败时保持危险输出安全态并直接软件复位。正常工作后 IWDG 已无法停止，因此再次关机时先立即关闭危险输出，继续运行蜂鸣器任务 2 s，再用 BKP DAT42 标记并受控复位；该标记仅在软件复位原因同时成立时有效，复位后不重复等待 10 s，直接进入 STOP0。STOP0 要求选项字节为软件 IWDG 且 `nRST_STOP=1`，条件不满足时仅记录错误并保持普通关机等待，不在运行时改写选项字节。进入 STOP0 前会关闭并复位 USART2、ADC1/ADC2、DAC、TIM1/TIM3/TIM4/TIM6/TIM8 及其非必要时钟，通过 SYS DIS 关闭 TM1621B，拉低 BATEN、拉高 BLEEN，保持治疗桥、蜂鸣器、气泵、阀门和背光的安全电平；PB4/PB5、PB7 及非唤醒按键切换为模拟输入，PB10/PB11/PB15、GPIOB/AFIO、PWR/BKP 和 SWD 保留用于唤醒与恢复。开机路径通过 `Treatment_DacReprepareForOperation()` 重建两路 DAC 与 TIM6。低功耗睡眠模式由 `APP_STOP2_ENABLE` 选择：0 为 STOP0（默认、已验证），1 为 STOP2（更深睡眠，唤醒/充电路径需先做台架验证再确定为量产默认）。
 
 为定位蓝牙控制期间的偶发 IWDG 复位，固件使用 BKP DAT1～DAT41 保存低开销运行快照。主循环只记录当前任务阶段，SysTick 每 100 ms 保存治疗/USART2 中断计数、TIM1/TIM8 无有效 CC3 标志的异常入口计数和串口错误计数；HardFault、MemManage、BusFault、UsageFault 和断言会额外保存 CFSR、HFSR、MMFAR 和 BFAR，ARM Compiler 5 构建还会保存异常栈中的 PC、LR、xPSR 和 EXC_RETURN。启动文件另有独立 `.fault_snapshot` NOINIT SRAM 区：故障时保存 MSP/PSP、完整基础异常帧、基础帧前后各 8 字、ICSR/SHCSR/CCR、MSP 距栈底距离及栈哨兵余量；软件或 IWDG 复位后以 `fault retained` RTT 日志输出，读取后不清除。IWDG 复位后启动日志以 `diag prev`、`diag irq`、`diag fault` 输出上次 BKP 快照，其中 `spur=TIM1/TIM8` 为饱和到 63 的异常入口计数。该诊断不在治疗 ISR 内打印日志，也不改变治疗定时器配置。
 
@@ -82,7 +82,7 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 
 - ADC1 用于电池电压及 PA6 外部参考采样；ADC2 用于 PA2 压力传感器采样。
 - 电池电压先经 3:1 一阶低通；蓝牙百分比以 LCD 格数阈值为锚点，在 0%/33%/66%/100% 四个节点间线性插值。百分比采用 2% 死区和连续 3 次确认；未充电只允许下降，充电只允许上升。
-- 未接充电器时，滤波电压换算电量连续低于 10% 满 10 s 后，系统先统一关闭治疗、气泵、阀门和蓝牙，再整屏闪烁 3 次、蜂鸣 3 次并进入关机低功耗。关机状态长按电源键会先检查电量；低于 10% 时仅显示空电池图标闪烁 3 次，不进入工作状态。充电器接入会取消该低电流程。
+- 未接充电器时，滤波电压严格低于 3.50 V 连续满 10 s（治疗模式）或 60 s（压力模式）后，系统先统一关闭治疗、气泵、阀门和蓝牙，再整屏闪烁 3 次、蜂鸣 3 次并进入关机低功耗。关机状态长按电源键会先检查电量；低于 3.50 V 时仅显示空电池图标闪烁 3 次，不进入工作状态。充电器接入会取消该低电流程。
 - 压力流程为“空闲→预充气→正式测试→结果保持→放气复位”：首次有效采样达到 5 mmHg 后开始固定 10 s 测试，测试期间气泵以 500 Hz PWM 继续充气；电池电压 4.20 V 至 3.50 V 时占空比由 25% 线性补偿至 27%，压力值闪烁并显示实时值。
 - 预充气最长 60 s；110 mmHg 为最高优先级停泵和终止测试上限。仅完整运行 10 s 的测试保留最大压力并主动上报；提前停止、放气、ADC 异常或超压均丢弃本轮数据。
 - BATEN（PB2）在开机、工作和充电电池会话期间持续有效，关机或故障安全状态关闭，避免周期性通断干扰模拟前端。
@@ -136,10 +136,14 @@ SysTick、USART2 及治疗定时器 ISR 在退出前执行 `__DSB()`，确保外
 | `APP_STOP0_ENABLE` | `1` | 允许无充电器的 `POWER_OFF` 状态进入 STOP0；须配合正确选项字节。 |
 | `APP_STOP0_ENTRY_DELAY_MS` | `10000` | 上电或唤醒后进入 STOP0 前保留的下载、恢复和输入检测窗口。 |
 | `APP_POWER_OFF_BEEP_DELAY_MS` | `2000` | 工作状态关机后保留蜂鸣器任务运行的时间，结束后受控复位并进入 STOP0。 |
-| `APP_LOW_BATTERY_SHUTDOWN_PERCENT` | `10` | 自动关机和开机禁止使用的电量阈值；严格低于该值时生效。 |
-| `APP_LOW_BATTERY_CONFIRM_MS` | `10000` | 工作中电量连续低于阈值的确认时间。 |
+| `APP_LOW_BATTERY_SHUTDOWN_MV` | `3500` | 自动关机和开机禁止使用的电压阈值（mV）；严格低于该值时生效。 |
+| `APP_LOW_BATTERY_THERAPY_CONFIRM_MS` | `10000` | 治疗模式下滤波电压连续低于阈值的确认时间。 |
+| `APP_LOW_BATTERY_PRESSURE_CONFIRM_MS` | `60000` | 压力模式下滤波电压连续低于阈值的确认时间。 |
 | `APP_LOW_BATTERY_FLASH_HALF_PERIOD_MS` / `APP_LOW_BATTERY_FLASH_COUNT` | `500` / `3` | 低电提示闪烁半周期和闪烁次数。 |
+| `APP_BATTERY_FIRST_SAMPLE_SETTLE_MS` | `500` | BATEN 拉高后首次电池 ADC 采样的最小建立时间（ms）。 |
+| `APP_BATTERY_BOOT_VALID_SAMPLE_COUNT` | `3` | 开机电量检查所需的有效采样次数；采样结果经过现有低通滤波后再判定。 |
 | `APP_BATTERY_BOOT_CHECK_TIMEOUT_MS` | `3000` | 开机电量检查超时；超时按低电处理，禁止进入工作状态。 |
+| `APP_BATTERY_PERIODIC_LOG_ENABLE` | `0` | 关闭每秒电池 ADC、参考 ADC、换算电压和电量日志；联调时可置 `1`。 |
 | `APP_CORTEX_M4_838869_WORKAROUND_ENABLE` | `1` | 对 Cortex-M4 r0p0/r0p1 启用 838869 全局写缓冲规避；可能轻微增加写入延迟。 |
 | `BUZZER_OUTPUT_ENABLE` | `1` | 启用蜂鸣器提示音；TIM3 使用 PB1 输出 PWM。 |
 

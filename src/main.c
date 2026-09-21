@@ -309,8 +309,8 @@ typedef enum
 #define APP_EVENT_QUEUE_SIZE       16U
 #define KEY_SCAN_PERIOD_MS         10U
 #define KEY_DEBOUNCE_COUNT         3U
-#define POWER_ON_HOLD_MS           2000U
-#define POWER_OFF_HOLD_MS          2000U
+#define POWER_ON_HOLD_MS           3000U
+#define POWER_OFF_HOLD_MS          3000U
 #define START_LONG_HOLD_MS         2000U
 #define PRESSURE_START_LONG_HOLD_MS 3000U
 #define UI_BLINK_PERIOD_MS         500U
@@ -375,9 +375,7 @@ typedef enum
 #define BATTERY_LOW_ENTER_MV              3500U
 #define BATTERY_LOW_EXIT_MV               3600U
 #define BATTERY_PERCENT_FULL_MV           4200U
-#define BATTERY_SHUTDOWN_THRESHOLD_MV     \
-	(BATTERY_LOW_ENTER_MV + (((BATTERY_PERCENT_FULL_MV - BATTERY_LOW_ENTER_MV) * \
-	APP_LOW_BATTERY_SHUTDOWN_PERCENT) / 100U))
+#define BATTERY_SHUTDOWN_THRESHOLD_MV     APP_LOW_BATTERY_SHUTDOWN_MV
 #define BATTERY_LOW_CONFIRM_COUNT         3U
 #define BATTERY_PERCENT_DEADBAND          2U
 #define BATTERY_PERCENT_CONFIRM_COUNT     3U
@@ -460,6 +458,7 @@ typedef struct
 	uint8_t measurement_pending;
 	uint8_t next_sample_ticks;
 	uint8_t retry_ticks;
+	uint8_t boot_valid_sample_count;
 	uint8_t valid;
 	uint8_t level;
 	uint8_t percent;
@@ -469,7 +468,10 @@ typedef struct
 	uint8_t low_confirm_count;
 	uint8_t recover_confirm_count;
 	uint8_t error_reported;
+	uint16_t battery_adc;
+	uint16_t reference_adc;
 	uint16_t voltage_mv;
+	uint32_t first_sample_since_ms;
 } BatteryContext_t;
 
 typedef enum
@@ -1712,10 +1714,21 @@ static uint8_t LowPower_EnterStop0(void)
 	PWR_EnterStopState(PWR_REGULATOR_LOWPOWER, PWR_STOPENTRY_WFI);
 #endif
 	clock_restored = Clock_RestoreAfterStop0();
-	if (clock_restored != 0U)
+	if (clock_restored == 0U)
 	{
-		LowPower_PeripheralsRestore();
+		LOG_E("t=%u %s clock restore failed, core=%u Hz",
+		      s_system_tick_ms, stop_mode, SystemCoreClock);
+		/* Peripheral clocks are still suspended, so the normal FAULT state
+		 * cannot reliably drive its UI or recovery path. Reset directly while
+		 * interrupts remain masked and hazardous outputs stay in the pre-STOP
+		 * safe state. */
+		__DSB();
+		NVIC_SystemReset();
+		while (1)
+		{
+		}
 	}
+	LowPower_PeripheralsRestore();
 
 	/* Rebuild the 1 ms time base before allowing any application ISR to run. */
 	SysTick->LOAD = (SystemCoreClock / 1000U) - 1U;
@@ -1729,15 +1742,6 @@ static uint8_t LowPower_EnterStop0(void)
 	if (primask == 0U)
 	{
 		__enable_irq();
-	}
-
-	if (clock_restored == 0U)
-	{
-		LOG_E("t=%u %s clock restore failed, core=%u Hz",
-		      s_system_tick_ms, stop_mode, SystemCoreClock);
-		App_RequestState(APP_STATE_FAULT);
-		App_ApplyStateTransition();
-		return 0U;
 	}
 
 	LOG_I("t=%u %s wake, core=%u Hz", s_system_tick_ms, stop_mode, SystemCoreClock);
@@ -2879,10 +2883,10 @@ static void Ui_InitHardware(void)
 
 	/* UI 开启期间背光常亮，不再使用无操作倒计时单独关闭背光�? */
 	BLEN_ON;
-	LOG_I("t=%u ui hardware lcd=%u blen_out=%u blen_pin=%u",
-	      s_system_tick_ms, s_ui.lcd_initialized,
-	      GPIO_ReadOutputDataBit(BLEN_PORT, BLEN_PIN),
-	      GPIO_ReadInputDataBit(BLEN_PORT, BLEN_PIN));
+	// LOG_I("t=%u ui hardware lcd=%u blen_out=%u blen_pin=%u",
+	//       s_system_tick_ms, s_ui.lcd_initialized,
+	//       GPIO_ReadOutputDataBit(BLEN_PORT, BLEN_PIN),
+	//       GPIO_ReadInputDataBit(BLEN_PORT, BLEN_PIN));
 }
 
 static void Ui_Shutdown(void)
@@ -3206,6 +3210,7 @@ static void Battery_InitModel(void)
 	s_battery.measurement_pending = 0U;
 	s_battery.next_sample_ticks = 0U;
 	s_battery.retry_ticks = 0U;
+	s_battery.boot_valid_sample_count = 0U;
 	s_battery.valid = 0U;
 	s_battery.level = 0U;
 	s_battery.percent = 0U;
@@ -3215,7 +3220,10 @@ static void Battery_InitModel(void)
 	s_battery.low_confirm_count = 0U;
 	s_battery.recover_confirm_count = 0U;
 	s_battery.error_reported = 0U;
+	s_battery.battery_adc = 0U;
+	s_battery.reference_adc = 0U;
 	s_battery.voltage_mv = 0U;
+	s_battery.first_sample_since_ms = 0U;
 }
 
 static void Battery_StartSession(void)
@@ -3225,6 +3233,7 @@ static void Battery_StartSession(void)
 	Battery_InitModel();
 	s_battery.session_active = 1U;
 	BATEN_ON;
+	s_battery.first_sample_since_ms = s_system_tick_ms;
 	AppUi_SetBattery(0U, 0U);
 }
 
@@ -3513,6 +3522,9 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
 		return;
 	}
 
+	s_battery.battery_adc = battery_adc;
+	s_battery.reference_adc = reference_adc;
+
 	if (s_battery.valid == 0U)
 	{
 		s_battery.voltage_mv = measured_mv;
@@ -3523,6 +3535,15 @@ static void Battery_ProcessMeasurement(uint16_t battery_adc,
 		/* 一阶低通：新值占 1/4，旧值占 3/4，降低负载脉冲造成的跳动�? */
 		s_battery.voltage_mv = (uint16_t)(((uint32_t)s_battery.voltage_mv * 3U +
 		                                        measured_mv + 2U) / 4U);
+	}
+
+	if ((s_app.state == APP_STATE_BATTERY_CHECK) &&
+	    (s_battery.boot_valid_sample_count < APP_BATTERY_BOOT_VALID_SAMPLE_COUNT))
+	{
+		s_battery.boot_valid_sample_count++;
+		LOG_D("t=%u battery boot sample=%u/%u mv=%u",
+		      s_system_tick_ms, s_battery.boot_valid_sample_count,
+		      APP_BATTERY_BOOT_VALID_SAMPLE_COUNT, s_battery.voltage_mv);
 	}
 
 	s_battery.level = Battery_CalculateLevel(s_battery.voltage_mv);
@@ -3608,6 +3629,12 @@ static uint8_t Battery_Task100ms(void)
 
 	/* 开机、工作和充电期间保持 BATEN 有效，避免周期切换扰动模拟前端。 */
 	BATEN_ON;
+	if ((s_battery.valid == 0U) &&
+	    ((uint32_t)(s_system_tick_ms - s_battery.first_sample_since_ms) <
+	     APP_BATTERY_FIRST_SAMPLE_SETTLE_MS))
+	{
+		return 0U;
+	}
 
 	if (s_battery.retry_ticks != 0U)
 	{
@@ -3657,7 +3684,12 @@ static uint8_t Battery_Task100ms(void)
 		}
 
 		s_battery.measurement_pending = 0U;
-		if ((pressure_mode != 0U) &&
+		if (s_app.state == APP_STATE_BATTERY_CHECK)
+		{
+			/* Obtain all boot-confirmation samples before the 3 s deadline. */
+			s_battery.next_sample_ticks = 0U;
+		}
+		else if ((pressure_mode != 0U) &&
 		    (s_pressure_process.state == PRESSURE_PROCESS_TESTING))
 		{
 			s_battery.next_sample_ticks = BATTERY_PRESSURE_TEST_IDLE_TICKS;
@@ -3718,6 +3750,7 @@ static void BatterySafety_Task10ms(void)
 	uint8_t operating_state = ((s_app.state == APP_STATE_READY) ||
 	                           (s_app.state == APP_STATE_THERAPY) ||
 	                           (s_app.state == APP_STATE_PRESSURE)) ? 1U : 0U;
+	uint32_t low_battery_confirm_ms;
 
 	if (s_app.state == APP_STATE_BATTERY_CHECK)
 	{
@@ -3727,7 +3760,8 @@ static void BatterySafety_Task10ms(void)
 			return;
 		}
 
-		if (s_battery.valid != 0U)
+		if ((s_battery.valid != 0U) &&
+		    (s_battery.boot_valid_sample_count >= APP_BATTERY_BOOT_VALID_SAMPLE_COUNT))
 		{
 			if (s_battery.voltage_mv < BATTERY_SHUTDOWN_THRESHOLD_MV)
 			{
@@ -3758,6 +3792,15 @@ static void BatterySafety_Task10ms(void)
 		return;
 	}
 
+	if (s_app.state == APP_STATE_PRESSURE)
+	{
+		low_battery_confirm_ms = APP_LOW_BATTERY_PRESSURE_CONFIRM_MS;
+	}
+	else
+	{
+		low_battery_confirm_ms = APP_LOW_BATTERY_THERAPY_CONFIRM_MS;
+	}
+
 	if (s_battery.voltage_mv >= BATTERY_SHUTDOWN_THRESHOLD_MV)
 	{
 		BatterySafety_ResetLowTimer();
@@ -3774,7 +3817,7 @@ static void BatterySafety_Task10ms(void)
 	}
 
 	if ((uint32_t)(s_system_tick_ms - s_low_battery_below_since_ms) >=
-	    APP_LOW_BATTERY_CONFIRM_MS)
+	    low_battery_confirm_ms)
 	{
 		LowBattery_StartWarning(LOW_BATTERY_WARNING_AUTO_SHUTDOWN);
 	}
@@ -4056,7 +4099,7 @@ static void PressureAdc_Task50ms(void)
 			return;
 		}
 		s_pressure_adc_initialized = 1U;
-		LOG_I("t=%u pressure ADC2 initialized", now);
+		// LOG_I("t=%u pressure ADC2 initialized", now);
 	}
 
 	if (s_pressure_adc_sampling_active == 0U)
@@ -4306,21 +4349,21 @@ static void BleName_SendCommand(const char *command, uint8_t length,
 	s_ble_name.state = wait_state;
 	if (wait_state == BLE_NAME_WAIT_MAC)
 	{
-		LOG_I("t=%u BLE AT TX: query MAC", s_system_tick_ms);
+		LOG_D("t=%u BLE AT TX: query MAC", s_system_tick_ms);
 	}
 	else if (wait_state == BLE_NAME_WAIT_CURRENT_NAME)
 	{
-		LOG_I("t=%u BLE AT TX: query name%s", s_system_tick_ms,
+		LOG_D("t=%u BLE AT TX: query name%s", s_system_tick_ms,
 		      (s_ble_name.set_attempts != 0U) ? " after reset" : "");
 	}
 	else if (wait_state == BLE_NAME_WAIT_SET_RESULT)
 	{
-		LOG_I("t=%u BLE AT TX: set name=%s", s_system_tick_ms,
+		LOG_D("t=%u BLE AT TX: set name=%s", s_system_tick_ms,
 		      s_ble_name.desired_name);
 	}
 	else if (wait_state == BLE_NAME_WAIT_RESET_TX)
 	{
-		LOG_I("t=%u BLE AT TX: reset module", s_system_tick_ms);
+		LOG_D("t=%u BLE AT TX: reset module", s_system_tick_ms);
 	}
 }
 
@@ -5418,6 +5461,16 @@ static void Sensor_Task100ms(void)
 
 static void Power_Task1000ms(void)
 {
+#if (APP_BATTERY_PERIODIC_LOG_ENABLE != 0U)
+	if (s_battery.valid != 0U)
+	{
+		LOG_I("t=%u battery adc, bat_adc=%u ref_adc=%u mv=%u percent=%u",
+		      s_system_tick_ms, s_battery.battery_adc,
+		      s_battery.reference_adc, s_battery.voltage_mv,
+		      s_battery.percent);
+	}
+#endif
+
 	if (s_ui.charger_connected != 0U)
 	{
 		if (s_ui.charger_full == 0U)
